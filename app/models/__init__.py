@@ -1,25 +1,17 @@
-"""Models package initialization."""
+"""
+Data models for Drift Detection Service.
+"""
 
-from app.models.behavior import Behavior
-from app.models.drift_signal import DriftSignal
-from app.models.schemas import (
-    BehaviorResponse,
-    CanonicalBehaviorInput,
-    ErrorResponse,
-    HealthCheckResponse,
-    ProcessBehaviorRequest,
-    ProcessBehaviorResponse,
-    ResolutionDetail,
-)
+from app.models.behavior import BehaviorRecord, ConflictRecord
+from app.models.snapshot import BehaviorSnapshot
+from app.models.drift import DriftSignal, DriftEvent, DriftType, DriftSeverity
 
 __all__ = [
-    "Behavior",
+    "BehaviorRecord",
+    "ConflictRecord",
+    "BehaviorSnapshot",
     "DriftSignal",
-    "CanonicalBehaviorInput",
-    "ProcessBehaviorRequest",
-    "BehaviorResponse",
-    "ResolutionDetail",
-    "ProcessBehaviorResponse",
-    "HealthCheckResponse",
-    "ErrorResponse",
+    "DriftEvent",
+    "DriftType",
+    "DriftSeverity",
 ]

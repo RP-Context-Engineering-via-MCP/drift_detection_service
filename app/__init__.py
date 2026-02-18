@@ -1,3 +1,5 @@
-"""Application package initialization."""
+"""
+Drift Detection Service - Core Package
+"""
 
 __version__ = "1.0.0"
