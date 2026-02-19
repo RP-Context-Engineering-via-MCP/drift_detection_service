@@ -4,22 +4,37 @@ import pytest
 from datetime import datetime, timedelta, timezone
 
 from app.core.snapshot_builder import SnapshotBuilder
-from app.db.connection import create_tables, drop_tables, get_sync_connection_simple
+from app.db.connection import create_tables, drop_tables, clear_all_data, get_sync_connection_simple
 from tests.conftest import make_behavior, make_conflict
 
 
-@pytest.fixture
-def db_connection():
-    """Create test database connection."""
-    # Setup: create tables
+@pytest.fixture(scope="session")
+def setup_database():
+    """Create database tables once for all tests."""
+    print("\n🔧 Setting up test database...")
     create_tables()
+    yield
+    print("\n🧹 Tearing down test database...")
+    drop_tables()
+
+
+@pytest.fixture
+def db_connection(setup_database):
+    """Create test database connection and clear data between tests."""
+    # Clear any existing data before test
+    clear_all_data()
+    
     conn = get_sync_connection_simple()
     
     yield conn
     
-    # Teardown: drop tables
+    # Commit any pending transactions and close connection
+    try:
+        conn.commit()
+    except Exception:
+        pass
+    
     conn.close()
-    drop_tables()
 
 
 @pytest.fixture

@@ -271,6 +271,30 @@ def create_tables() -> None:
     
     CREATE INDEX IF NOT EXISTS idx_drift_user_type 
         ON drift_events(user_id, drift_type);
+    
+    -- ═══════════════════════════════════════════════════════════════════════
+    -- Drift Scan Jobs Table
+    -- ═══════════════════════════════════════════════════════════════════════
+    
+    CREATE TABLE IF NOT EXISTS drift_scan_jobs (
+        job_id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id          TEXT NOT NULL,
+        trigger_event    TEXT NOT NULL,
+        status           TEXT NOT NULL DEFAULT 'PENDING',
+        priority         TEXT NOT NULL DEFAULT 'NORMAL',
+        scheduled_at     BIGINT NOT NULL,
+        started_at       BIGINT,
+        completed_at     BIGINT,
+        error_message    TEXT,
+        
+        CONSTRAINT valid_status CHECK (status IN ('PENDING', 'RUNNING', 'DONE', 'FAILED', 'SKIPPED'))
+    );
+    
+    CREATE INDEX IF NOT EXISTS idx_scan_jobs_user_status 
+        ON drift_scan_jobs(user_id, status);
+    
+    CREATE INDEX IF NOT EXISTS idx_scan_jobs_status_scheduled 
+        ON drift_scan_jobs(status, scheduled_at);
     """
     
     print("Creating database tables...")
@@ -292,6 +316,7 @@ def drop_tables() -> None:
     """
     
     drop_sql = """
+    DROP TABLE IF EXISTS drift_scan_jobs CASCADE;
     DROP TABLE IF EXISTS drift_events CASCADE;
     DROP TABLE IF EXISTS conflict_snapshots CASCADE;
     DROP TABLE IF EXISTS behavior_snapshots CASCADE;
@@ -320,6 +345,7 @@ def clear_all_data() -> None:
     Useful for test cleanup - much faster than drop/create cycle.
     """
     clear_sql = """
+    DELETE FROM drift_scan_jobs;
     DELETE FROM drift_events;
     DELETE FROM conflict_snapshots;
     DELETE FROM behavior_snapshots;
@@ -350,12 +376,13 @@ def check_database_health() -> bool:
                 WHERE table_name IN (
                     'behavior_snapshots', 
                     'conflict_snapshots', 
-                    'drift_events'
+                    'drift_events',
+                    'drift_scan_jobs'
                 )
             """)
             
             count = cursor.fetchone()[0]
-            return count == 3
+            return count == 4
             
     except Exception as e:
         print(f"❌ Database health check failed: {e}")

@@ -1,0 +1,214 @@
+version: '3.8'
+
+services:
+  # ─────────────────────────────────────────────────────────────────────────
+  # Redis - Message broker, cache, and task queue backend
+  # ─────────────────────────────────────────────────────────────────────────
+  redis:
+    image: redis:7.2-alpine
+    container_name: drift-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - drift-network
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # API Service - FastAPI application with scheduler
+  # ─────────────────────────────────────────────────────────────────────────
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: drift-api
+    ports:
+      - "8000:8000"
+    environment:
+      # Application
+      - ENVIRONMENT=production
+      - DEBUG=false
+      - LOG_LEVEL=INFO
+      
+      # Database (Supabase or local PostgreSQL)
+      - DATABASE_URL=${DATABASE_URL}
+      
+      # Redis
+      - REDIS_URL=redis://redis:6379/0
+      - REDIS_STREAM_BEHAVIOR_EVENTS=behavior.events
+      - REDIS_STREAM_DRIFT_EVENTS=drift.events
+      - REDIS_CONSUMER_GROUP=drift_detection_service
+      - REDIS_CONSUMER_NAME=api_consumer
+      
+      # Celery
+      - CELERY_BROKER_URL=redis://redis:6379/1
+      - CELERY_RESULT_BACKEND=redis://redis:6379/2
+      
+      # Thresholds
+      - MIN_BEHAVIORS_FOR_DRIFT=${MIN_BEHAVIORS_FOR_DRIFT:-5}
+      - MIN_DAYS_OF_HISTORY=${MIN_DAYS_OF_HISTORY:-14}
+      - SCAN_COOLDOWN_SECONDS=${SCAN_COOLDOWN_SECONDS:-3600}
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8000/api/v1/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    restart: unless-stopped
+    networks:
+      - drift-network
+    # volumes:
+      # Mount for development (optional - comment out for production)
+      # - .:/app
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # Worker Service - Celery worker for background scan jobs
+  # ─────────────────────────────────────────────────────────────────────────
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: drift-worker
+    command: celery -A app.workers.celery_app worker --loglevel=info --concurrency=4
+    environment:
+      # Application
+      - ENVIRONMENT=production
+      - DEBUG=false
+      - LOG_LEVEL=INFO
+      
+      # Database
+      - DATABASE_URL=${DATABASE_URL}
+      
+      # Redis
+      - REDIS_URL=redis://redis:6379/0
+      - REDIS_STREAM_BEHAVIOR_EVENTS=behavior.events
+      - REDIS_STREAM_DRIFT_EVENTS=drift.events
+      
+      # Celery
+      - CELERY_BROKER_URL=redis://redis:6379/1
+      - CELERY_RESULT_BACKEND=redis://redis:6379/2
+      - CELERY_WORKER_PREFETCH_MULTIPLIER=1
+      - CELERY_WORKER_MAX_TASKS_PER_CHILD=100
+      
+      # Thresholds
+      - MIN_BEHAVIORS_FOR_DRIFT=${MIN_BEHAVIORS_FOR_DRIFT:-5}
+      - MIN_DAYS_OF_HISTORY=${MIN_DAYS_OF_HISTORY:-14}
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "celery", "-A", "app.workers.celery_app", "inspect", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    restart: unless-stopped
+    networks:
+      - drift-network
+    deploy:
+      replicas: 1
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # Consumer Service - Redis Streams consumer for behavior events
+  # ─────────────────────────────────────────────────────────────────────────
+  consumer:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: drift-consumer
+    command: python -m app.consumer.redis_consumer
+    environment:
+      # Application
+      - ENVIRONMENT=production
+      - DEBUG=false
+      - LOG_LEVEL=INFO
+      
+      # Database
+      - DATABASE_URL=${DATABASE_URL}
+      
+      # Redis
+      - REDIS_URL=redis://redis:6379/0
+      - REDIS_STREAM_BEHAVIOR_EVENTS=behavior.events
+      - REDIS_CONSUMER_GROUP=drift_detection_service
+      - REDIS_CONSUMER_NAME=consumer_1
+      - REDIS_BLOCK_MS=5000
+      - REDIS_MAX_EVENTS_PER_READ=10
+      
+      # Celery
+      - CELERY_BROKER_URL=redis://redis:6379/1
+      - CELERY_RESULT_BACKEND=redis://redis:6379/2
+      
+      # Thresholds
+      - MIN_BEHAVIORS_FOR_DRIFT=${MIN_BEHAVIORS_FOR_DRIFT:-5}
+      - SCAN_COOLDOWN_SECONDS=${SCAN_COOLDOWN_SECONDS:-3600}
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - drift-network
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 1G
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # Optional: Local PostgreSQL (use if not using Supabase)
+  # ─────────────────────────────────────────────────────────────────────────
+  # postgres:
+  #   image: postgres:15-alpine
+  #   container_name: drift-postgres
+  #   environment:
+  #     - POSTGRES_DB=drift_detection
+  #     - POSTGRES_USER=drift_user
+  #     - POSTGRES_PASSWORD=drift_password
+  #   ports:
+  #     - "5432:5432"
+  #   volumes:
+  #     - postgres_data:/var/lib/postgresql/data
+  #   healthcheck:
+  #     test: ["CMD-SHELL", "pg_isready -U drift_user -d drift_detection"]
+  #     interval: 10s
+  #     timeout: 5s
+  #     retries: 5
+  #   restart: unless-stopped
+  #   networks:
+  #     - drift-network
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Networks
+# ─────────────────────────────────────────────────────────────────────────────
+networks:
+  drift-network:
+    driver: bridge
+    name: drift-network
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Volumes
+# ─────────────────────────────────────────────────────────────────────────────
+volumes:
+  redis_data:
+    name: drift-redis-data
+  # postgres_data:
+  #   name: drift-postgres-data

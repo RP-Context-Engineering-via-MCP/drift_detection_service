@@ -32,6 +32,108 @@ class Settings(BaseSettings):
     db_pool_timeout: int = 30
     db_echo: bool = False
     
+    # ─── Redis Settings ──────────────────────────────────────────────────
+    redis_url: str = Field(
+        default="redis://localhost:6379/0",
+        description="Redis connection URL for message broker and cache"
+    )
+    redis_stream_behavior_events: str = Field(
+        default="behavior.events",
+        description="Redis stream name for behavior events"
+    )
+    redis_stream_drift_events: str = Field(
+        default="drift.events",
+        description="Redis stream name for drift events"
+    )
+    redis_consumer_group: str = Field(
+        default="drift_detection_service",
+        description="Consumer group name for behavior event processing"
+    )
+    redis_consumer_name: str = Field(
+        default="detector_1",
+        description="Consumer name within the consumer group"
+    )
+    redis_block_ms: int = Field(
+        default=5000,
+        description="Block time in milliseconds when reading from streams"
+    )
+    redis_max_events_per_read: int = Field(
+        default=10,
+        description="Maximum events to read per stream read operation"
+    )
+    
+    # ─── Celery Settings ─────────────────────────────────────────────────
+    celery_broker_url: str = Field(
+        default="redis://localhost:6379/1",
+        description="Celery broker URL (Redis)"
+    )
+    celery_result_backend: str = Field(
+        default="redis://localhost:6379/2",
+        description="Celery result backend URL (Redis)"
+    )
+    celery_task_serializer: str = Field(
+        default="json",
+        description="Serialization format for task messages"
+    )
+    celery_result_serializer: str = Field(
+        default="json",
+        description="Serialization format for task results"
+    )
+    celery_accept_content: list = Field(
+        default=["json"],
+        description="Accepted content types for tasks"
+    )
+    celery_task_track_started: bool = Field(
+        default=True,
+        description="Track task execution start time"
+    )
+    celery_task_time_limit: int = Field(
+        default=300,
+        description="Hard time limit for tasks in seconds (5 minutes)"
+    )
+    celery_task_soft_time_limit: int = Field(
+        default=240,
+        description="Soft time limit for tasks in seconds (4 minutes)"
+    )
+    celery_worker_prefetch_multiplier: int = Field(
+        default=1,
+        description="Number of tasks a worker can prefetch at once"
+    )
+    celery_worker_max_tasks_per_child: int = Field(
+        default=100,
+        description="Maximum tasks a worker child process can execute before restart"
+    )
+    
+    # ─── Scheduler Settings ──────────────────────────────────────────────
+    active_user_scan_interval_hours: int = Field(
+        default=24,
+        description="Interval in hours for scanning active users"
+    )
+    moderate_user_scan_interval_hours: int = Field(
+        default=72,
+        description="Interval in hours for scanning moderate users (every 3 days)"
+    )
+    active_user_days_threshold: int = Field(
+        default=7,
+        description="Users active within this many days are considered 'active'"
+    )
+    moderate_user_days_threshold: int = Field(
+        default=30,
+        description="Users active within this many days are considered 'moderate'"
+    )
+    dead_letter_check_interval_minutes: int = Field(
+        default=10,
+        description="Interval in minutes for checking dead letter queue"
+    )
+    dead_letter_idle_threshold_ms: int = Field(
+        default=300_000,
+        description="Messages idle for this many milliseconds (5 min) are considered dead"
+    )
+    dead_letter_max_delivery_attempts: int = Field(
+        default=3,
+        description="Maximum delivery attempts before moving to dead letter queue"
+    )
+    
     # ─── Drift Detection Thresholds ──────────────────────────────────────
     
     # Minimum data requirements for drift detection

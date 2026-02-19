@@ -320,3 +320,228 @@ class BehaviorRepository:
             raise
         finally:
             cursor.close()
+
+    def get_behavior(self, user_id: str, behavior_id: str) -> Optional[dict]:
+        """
+        Retrieve a single behavior by ID.
+
+        Args:
+            user_id: User identifier
+            behavior_id: Behavior identifier
+
+        Returns:
+            Behavior as dictionary, or None if not found
+        """
+        query = """
+            SELECT 
+                user_id, behavior_id, target, intent, context,
+                polarity, credibility, reinforcement_count, state,
+                created_at, last_seen_at, snapshot_updated_at
+            FROM behavior_snapshots
+            WHERE user_id = %s AND behavior_id = %s
+        """
+
+        try:
+            cursor = self.connection.cursor()
+            cursor.execute(self._adapt_query(query), (user_id, behavior_id))
+            row = cursor.fetchone()
+            cursor.close()
+
+            if not row:
+                return None
+
+            return {
+                "user_id": row[0],
+                "behavior_id": row[1],
+                "target": row[2],
+                "intent": row[3],
+                "context": row[4],
+                "polarity": row[5],
+                "credibility": row[6],
+                "reinforcement_count": row[7],
+                "state": row[8],
+                "created_at": row[9],
+                "last_seen_at": row[10],
+                "snapshot_updated_at": row[11],
+            }
+
+        except Exception as e:
+            logger.error(f"Error retrieving behavior {behavior_id}: {e}")
+            raise
+
+    def get_active_behaviors(self, user_id: str) -> List[BehaviorRecord]:
+        """
+        Retrieve all active behaviors for a user.
+
+        Args:
+            user_id: User identifier
+
+        Returns:
+            List of active BehaviorRecord objects
+        """
+        query = """
+            SELECT 
+                user_id, behavior_id, target, intent, context,
+                polarity, credibility, reinforcement_count, state,
+                created_at, last_seen_at, snapshot_updated_at
+            FROM behavior_snapshots
+            WHERE user_id = %s AND state = 'ACTIVE'
+            ORDER BY created_at DESC
+        """
+
+        try:
+            cursor = self.connection.cursor()
+            cursor.execute(self._adapt_query(query), (user_id,))
+            rows = cursor.fetchall()
+            cursor.close()
+
+            behaviors = []
+            for row in rows:
+                behavior = BehaviorRecord(
+                    user_id=row[0],
+                    behavior_id=row[1],
+                    target=row[2],
+                    intent=row[3],
+                    context=row[4],
+                    polarity=row[5],
+                    credibility=row[6],
+                    reinforcement_count=row[7],
+                    state=row[8],
+                    created_at=row[9],
+                    last_seen_at=row[10],
+                    snapshot_updated_at=row[11],
+                )
+                behaviors.append(behavior)
+
+            logger.debug(f"Retrieved {len(behaviors)} active behaviors for user {user_id}")
+            return behaviors
+
+        except Exception as e:
+            logger.error(f"Error retrieving active behaviors: {e}")
+            raise
+
+    def upsert_behavior(
+        self,
+        user_id: str,
+        behavior_id: str,
+        target: str,
+        intent: str,
+        context: str,
+        polarity: str,
+        credibility: float,
+        reinforcement_count: int,
+        state: str,
+        created_at: int,
+        last_seen_at: int
+    ) -> None:
+        """
+        Insert or update a behavior snapshot.
+
+        Uses PostgreSQL's ON CONFLICT clause to handle duplicates.
+
+        Args:
+            user_id: User identifier
+            behavior_id: Behavior identifier
+            target: Target entity
+            intent: Intent category
+            context: Context category
+            polarity: Polarity (POSITIVE, NEGATIVE, NEUTRAL)
+            credibility: Credibility score (0.0-1.0)
+            reinforcement_count: Number of reinforcements
+            state: Behavior state (ACTIVE, SUPERSEDED)
+            created_at: Creation timestamp
+            last_seen_at: Last seen timestamp
+        """
+        from datetime import datetime, timezone
+        snapshot_updated_at = int(datetime.now(timezone.utc).timestamp())
+
+        query = """
+            INSERT INTO behavior_snapshots (
+                user_id, behavior_id, target, intent, context,
+                polarity, credibility, reinforcement_count, state,
+                created_at, last_seen_at, snapshot_updated_at
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (user_id, behavior_id)
+            DO UPDATE SET
+                target = EXCLUDED.target,
+                intent = EXCLUDED.intent,
+                context = EXCLUDED.context,
+                polarity = EXCLUDED.polarity,
+                credibility = EXCLUDED.credibility,
+                reinforcement_count = EXCLUDED.reinforcement_count,
+                state = EXCLUDED.state,
+                last_seen_at = EXCLUDED.last_seen_at,
+                snapshot_updated_at = EXCLUDED.snapshot_updated_at
+        """
+
+        try:
+            cursor = self.connection.cursor()
+            cursor.execute(
+                self._adapt_query(query),
+                (
+                    user_id, behavior_id, target, intent, context,
+                    polarity, credibility, reinforcement_count, state,
+                    created_at, last_seen_at, snapshot_updated_at
+                )
+            )
+            logger.debug(f"Upserted behavior {behavior_id} for user {user_id}")
+        except Exception as e:
+            logger.error(f"Failed to upsert behavior {behavior_id}: {e}")
+            raise
+        finally:
+            cursor.close()
+
+    def update_behavior(
+        self,
+        user_id: str,
+        behavior_id: str,
+        **kwargs
+    ) -> None:
+        """
+        Update specific fields of a behavior.
+
+        Args:
+            user_id: User identifier
+            behavior_id: Behavior identifier
+            **kwargs: Fields to update (e.g., reinforcement_count, last_seen_at, state)
+        """
+        from datetime import datetime, timezone
+        
+        if not kwargs:
+            logger.warning("update_behavior called with no fields to update")
+            return
+
+        # Build dynamic UPDATE query
+        set_clauses = []
+        params = []
+        
+        for key, value in kwargs.items():
+            set_clauses.append(f"{key} = %s")
+            params.append(value)
+        
+        # Always update snapshot_updated_at
+        set_clauses.append("snapshot_updated_at = %s")
+        params.append(int(datetime.now(timezone.utc).timestamp()))
+        
+        # Add WHERE clause params
+        params.extend([user_id, behavior_id])
+        
+        query = f"""
+            UPDATE behavior_snapshots
+            SET {', '.join(set_clauses)}
+            WHERE user_id = %s AND behavior_id = %s
+        """
+
+        try:
+            cursor = self.connection.cursor()
+            cursor.execute(self._adapt_query(query), params)
+            
+            logger.debug(
+                f"Updated behavior {behavior_id} for user {user_id}: {kwargs}"
+            )
+        except Exception as e:
+            logger.error(f"Failed to update behavior {behavior_id}: {e}")
+            raise
+        finally:
+            cursor.close()
+

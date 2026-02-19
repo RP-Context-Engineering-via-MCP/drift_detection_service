@@ -21,6 +21,7 @@ from api.errors import (
     generic_error_handler
 )
 from app.config import get_settings
+from app.scheduler import build_scheduler
 
 # Setup logging
 logging.basicConfig(
@@ -53,12 +54,23 @@ async def lifespan(app: FastAPI):
         db_info = "configured"
     
     logger.info(f"Database: {db_info}")
+    
+    # Start APScheduler
+    scheduler = build_scheduler()
+    scheduler.start()
+    logger.info("APScheduler started with periodic jobs")
+    
     logger.info("API is ready to accept requests")
     
     yield
     
     # Shutdown
     logger.info("Shutting down Drift Detection API...")
+    
+    # Stop scheduler
+    scheduler.shutdown(wait=False)
+    logger.info("APScheduler stopped")
+    
     close_db_pool()
     logger.info("Database connections closed")
 

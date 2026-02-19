@@ -8,9 +8,11 @@ data in the database following the repository pattern.
 from app.db.repositories.behavior_repo import BehaviorRepository
 from app.db.repositories.conflict_repo import ConflictRepository
 from app.db.repositories.drift_event_repo import DriftEventRepository
+from app.db.repositories.scan_job_repo import ScanJobRepository
 
 __all__ = [
     "BehaviorRepository",
     "ConflictRepository",
     "DriftEventRepository",
+    "ScanJobRepository",
 ]
