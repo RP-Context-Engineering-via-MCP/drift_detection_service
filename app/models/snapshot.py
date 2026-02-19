@@ -19,6 +19,9 @@ class BehaviorSnapshot:
     
     Contains all behaviors and conflicts in the window, plus computed
     distributions and aggregations for drift analysis.
+    
+    For reference (historical) windows, set include_superseded=True to include
+    behaviors that were active during that window even if now superseded.
     """
     
     user_id: str
@@ -26,6 +29,7 @@ class BehaviorSnapshot:
     window_end: datetime
     behaviors: List[BehaviorRecord] = field(default_factory=list)
     conflict_records: List[ConflictRecord] = field(default_factory=list)
+    include_superseded: bool = False  # True for reference/historical windows
     
     # Computed distributions (lazy-loaded)
     _topic_distribution: Dict[str, float] = field(default_factory=dict, repr=False, init=False)
@@ -45,19 +49,22 @@ class BehaviorSnapshot:
         if self._computed:
             return
         
-        # Only use ACTIVE behaviors for distributions
-        active_behaviors = [b for b in self.behaviors if b.is_active]
+        # Use all behaviors if include_superseded, else only ACTIVE
+        relevant_behaviors = (
+            self.behaviors if self.include_superseded 
+            else [b for b in self.behaviors if b.is_active]
+        )
         
-        if not active_behaviors:
+        if not relevant_behaviors:
             self._computed = True
             return
         
         # ─── Topic Distribution (based on reinforcement_count) ───
-        total_reinforcements = sum(b.reinforcement_count for b in active_behaviors)
+        total_reinforcements = sum(b.reinforcement_count for b in relevant_behaviors)
         
         if total_reinforcements > 0:
             target_reinforcements = defaultdict(int)
-            for behavior in active_behaviors:
+            for behavior in relevant_behaviors:
                 target_reinforcements[behavior.target] += behavior.reinforcement_count
             
             self._topic_distribution = {
@@ -66,10 +73,10 @@ class BehaviorSnapshot:
             }
         
         # ─── Intent Distribution ───────────────────────────────────
-        total_behaviors = len(active_behaviors)
+        total_behaviors = len(relevant_behaviors)
         intent_counts = defaultdict(int)
         
-        for behavior in active_behaviors:
+        for behavior in relevant_behaviors:
             intent_counts[behavior.intent] += 1
         
         self._intent_distribution = {
@@ -79,7 +86,7 @@ class BehaviorSnapshot:
         
         # ─── Polarity by Target (most recent wins) ────────────────
         target_behaviors = defaultdict(list)
-        for behavior in active_behaviors:
+        for behavior in relevant_behaviors:
             target_behaviors[behavior.target].append(behavior)
         
         # For each target, take the polarity of the most recent behavior
@@ -142,6 +149,20 @@ class BehaviorSnapshot:
         """
         return [b for b in self.behaviors if b.is_active]
     
+    def _get_relevant_behaviors(self) -> List[BehaviorRecord]:
+        """
+        Get behaviors relevant for this snapshot's analysis.
+        
+        For reference/historical windows (include_superseded=True), returns all behaviors.
+        For current windows (include_superseded=False), returns only ACTIVE behaviors.
+        
+        Returns:
+            List of relevant BehaviorRecords
+        """
+        if self.include_superseded:
+            return self.behaviors
+        return [b for b in self.behaviors if b.is_active]
+    
     def get_reinforcement_count(self, target: str) -> int:
         """
         Get total reinforcement count for a target.
@@ -154,8 +175,8 @@ class BehaviorSnapshot:
         """
         return sum(
             b.reinforcement_count 
-            for b in self.behaviors 
-            if b.target == target and b.is_active
+            for b in self._get_relevant_behaviors()
+            if b.target == target
         )
     
     def get_targets(self) -> Set[str]:
@@ -165,7 +186,7 @@ class BehaviorSnapshot:
         Returns:
             Set of target strings
         """
-        return {b.target for b in self.behaviors if b.is_active}
+        return {b.target for b in self._get_relevant_behaviors()}
     
     def get_contexts_for_target(self, target: str) -> Set[str]:
         """
@@ -179,8 +200,8 @@ class BehaviorSnapshot:
         """
         return {
             b.context 
-            for b in self.behaviors 
-            if b.target == target and b.is_active
+            for b in self._get_relevant_behaviors()
+            if b.target == target
         }
     
     def get_average_credibility(self, target: str) -> float:
@@ -194,8 +215,8 @@ class BehaviorSnapshot:
             Average credibility (0.0-1.0) or 0.0 if no behaviors
         """
         target_behaviors = [
-            b for b in self.behaviors 
-            if b.target == target and b.is_active
+            b for b in self._get_relevant_behaviors()
+            if b.target == target
         ]
         
         if not target_behaviors:
@@ -213,7 +234,7 @@ class BehaviorSnapshot:
         Returns:
             True if target exists
         """
-        return any(b.target == target and b.is_active for b in self.behaviors)
+        return any(b.target == target for b in self._get_relevant_behaviors())
     
     def get_polarity_reversals(self) -> List[ConflictRecord]:
         """

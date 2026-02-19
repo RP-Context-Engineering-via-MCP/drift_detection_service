@@ -29,6 +29,7 @@ class SnapshotBuilder:
         user_id: str,
         window_start: datetime,
         window_end: datetime,
+        active_only: bool = True,
     ) -> BehaviorSnapshot:
         """
         Build a snapshot for a specific time window.
@@ -37,6 +38,9 @@ class SnapshotBuilder:
             user_id: User identifier
             window_start: Start of the time window
             window_end: End of the time window
+            active_only: If True, only include currently ACTIVE behaviors.
+                        If False, include behaviors that were active during the window
+                        (even if now SUPERSEDED). Use False for reference windows.
 
         Returns:
             BehaviorSnapshot with behaviors and conflicts from the window
@@ -73,10 +77,10 @@ class SnapshotBuilder:
         try:
             # Query behaviors in window
             behaviors = self.behavior_repo.get_behaviors_in_window(
-                user_id, start_ts, end_ts
+                user_id, start_ts, end_ts, active_only=active_only
             )
             logger.debug(
-                f"Found {len(behaviors)} behaviors in window",
+                f"Found {len(behaviors)} behaviors in window (active_only={active_only})",
                 extra={"user_id": user_id, "behavior_count": len(behaviors)}
             )
 
@@ -96,6 +100,7 @@ class SnapshotBuilder:
             raise RuntimeError(f"Failed to query behavior data: {e}") from e
 
         # Create snapshot (distributions computed automatically)
+        # For reference windows (active_only=False), include superseded behaviors
         try:
             snapshot = BehaviorSnapshot(
                 user_id=user_id,
@@ -103,6 +108,7 @@ class SnapshotBuilder:
                 window_end=window_end,
                 behaviors=behaviors,
                 conflict_records=conflicts,
+                include_superseded=not active_only,  # True for reference windows
             )
         except Exception as e:
             logger.error(
@@ -159,8 +165,11 @@ class SnapshotBuilder:
         )
 
         # Build both snapshots
-        reference = self.build_snapshot(user_id, ref_start, ref_end)
-        current = self.build_snapshot(user_id, current_start, current_end)
+        # Reference: include behaviors that were active during that historical period
+        # (even if now superseded)
+        reference = self.build_snapshot(user_id, ref_start, ref_end, active_only=False)
+        # Current: only currently active behaviors
+        current = self.build_snapshot(user_id, current_start, current_end, active_only=True)
 
         return reference, current
 

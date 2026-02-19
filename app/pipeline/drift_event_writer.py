@@ -18,13 +18,9 @@ from app.config import get_settings
 from app.db.repositories.drift_event_repo import DriftEventRepository
 from app.models.drift import DriftEvent
 from app.models.snapshot import BehaviorSnapshot
+from app.utils.time import now
 
 logger = logging.getLogger(__name__)
-
-
-def now() -> int:
-    """Get current UTC timestamp as integer."""
-    return int(datetime.now(timezone.utc).timestamp())
 
 
 class DriftEventWriter:

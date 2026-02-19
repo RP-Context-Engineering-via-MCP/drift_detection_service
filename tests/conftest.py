@@ -1,186 +1,267 @@
 """
-Test configuration and fixtures for drift detection tests.
+Pytest Configuration and Fixtures.
+
+Provides shared fixtures for testing the drift detection service.
 """
 
 import pytest
-import uuid
 from datetime import datetime, timezone, timedelta
-from typing import Dict, Any
+from typing import List
+from unittest.mock import MagicMock, patch
 
+from app.config import Settings
 from app.models.behavior import BehaviorRecord, ConflictRecord
 from app.models.snapshot import BehaviorSnapshot
+from app.models.drift import DriftSignal, DriftEvent, DriftType, DriftSeverity
 
 
-# ─── Time Utilities ──────────────────────────────────────────────────────
+# ============================================================================
+# Configuration Fixtures
+# ============================================================================
 
-def now() -> int:
-    """Get current timestamp as integer."""
-    return int(datetime.now(timezone.utc).timestamp())
-
-
-def days_ago(n: int) -> int:
-    """
-    Get timestamp for n days ago.
-    
-    Args:
-        n: Number of days in the past
-        
-    Returns:
-        Unix timestamp
-    """
-    dt = datetime.now(timezone.utc) - timedelta(days=n)
-    return int(dt.timestamp())
-
-
-def days_from_now(n: int) -> int:
-    """
-    Get timestamp for n days in the future.
-    
-    Args:
-        n: Number of days in the future
-        
-    Returns:
-        Unix timestamp
-    """
-    dt = datetime.now(timezone.utc) + timedelta(days=n)
-    return int(dt.timestamp())
-
-
-# ─── Factory Functions ───────────────────────────────────────────────────
-
-def make_behavior(**kwargs) -> BehaviorRecord:
-    """
-    Factory for test BehaviorRecord instances with sensible defaults.
-    
-    Usage:
-        behavior = make_behavior(target="python", reinforcement_count=5)
-    
-    Returns:
-        BehaviorRecord with default or overridden values
-    """
-    # Generate unique behavior_id using UUID to avoid duplicates
-    unique_id = str(uuid.uuid4())[:8]
-    
-    defaults = {
-        "user_id": "test_user",
-        "behavior_id": f"beh_{now()}_{unique_id}",
-        "target": "python",
-        "intent": "PREFERENCE",
-        "context": "general",
-        "polarity": "POSITIVE",
-        "credibility": 0.75,
-        "reinforcement_count": 1,
-        "state": "ACTIVE",
-        "created_at": days_ago(30),
-        "last_seen_at": days_ago(1),
-        "snapshot_updated_at": days_ago(1),
-    }
-    
-    # Override defaults with provided kwargs
-    defaults.update(kwargs)
-    
-    return BehaviorRecord(**defaults)
-
-
-def make_conflict(**kwargs) -> ConflictRecord:
-    """
-    Factory for test ConflictRecord instances with sensible defaults.
-    
-    Usage:
-        conflict = make_conflict(old_polarity="POSITIVE", new_polarity="NEGATIVE")
-    
-    Returns:
-        ConflictRecord with default or overridden values
-    """
-    # Generate unique IDs using UUID to avoid duplicates
-    unique_id = str(uuid.uuid4())[:8]
-    
-    defaults = {
-        "user_id": "test_user",
-        "conflict_id": f"conf_{now()}_{unique_id}",
-        "behavior_id_1": f"beh1_{now()}_{unique_id}",
-        "behavior_id_2": f"beh2_{now()}_{unique_id}",
-        "conflict_type": "RESOLVABLE",
-        "resolution_status": "AUTO_RESOLVED",
-        "old_polarity": None,
-        "new_polarity": None,
-        "old_target": None,
-        "new_target": None,
-        "created_at": days_ago(1),
-    }
-    
-    # Override defaults with provided kwargs
-    defaults.update(kwargs)
-    
-    return ConflictRecord(**defaults)
-
-
-def make_snapshot(
-    user_id: str = "test_user",
-    behaviors: list = None,
-    conflicts: list = None,
-    days_ago_start: int = 30,
-    days_ago_end: int = 0,
-) -> BehaviorSnapshot:
-    """
-    Factory for test BehaviorSnapshot instances.
-    
-    Args:
-        user_id: User ID for the snapshot
-        behaviors: List of BehaviorRecord objects (creates default if None)
-        conflicts: List of ConflictRecord objects
-        days_ago_start: How many days ago the window starts
-        days_ago_end: How many days ago the window ends (0 = now)
-    
-    Returns:
-        BehaviorSnapshot with default or provided data
-    """
-    now_dt = datetime.now(timezone.utc)
-    window_start = now_dt - timedelta(days=days_ago_start)
-    window_end = now_dt - timedelta(days=days_ago_end)
-    
-    if behaviors is None:
-        behaviors = [
-            make_behavior(user_id=user_id, target="python"),
-            make_behavior(user_id=user_id, target="javascript"),
-        ]
-    
-    if conflicts is None:
-        conflicts = []
-    
-    return BehaviorSnapshot(
-        user_id=user_id,
-        window_start=window_start,
-        window_end=window_end,
-        behaviors=behaviors,
-        conflict_records=conflicts,
+@pytest.fixture
+def test_settings() -> Settings:
+    """Create test settings with default values."""
+    return Settings(
+        database_url="postgresql://test:test@localhost/test_db",
+        debug=True,
+        environment="test",
+        drift_score_threshold=0.6,
+        min_behaviors_for_drift=3,
+        min_days_of_history=7,
+        scan_cooldown_seconds=60,
+        current_window_days=30,
+        reference_window_start_days=60,
+        reference_window_end_days=30,
+        abandonment_silence_days=30,
+        min_reinforcement_for_abandonment=2,
+        intensity_delta_threshold=0.25,
+        emergence_min_reinforcement=2,
     )
 
 
-# ─── Test Fixtures ───────────────────────────────────────────────────────
+# ============================================================================
+# Behavior Record Fixtures
+# ============================================================================
 
 @pytest.fixture
 def sample_behavior() -> BehaviorRecord:
-    """Fixture providing a sample behavior record."""
-    return make_behavior()
-
-
-@pytest.fixture
-def sample_conflict() -> ConflictRecord:
-    """Fixture providing a sample conflict record."""
-    return make_conflict(
-        old_polarity="POSITIVE",
-        new_polarity="NEGATIVE",
+    """Create a sample behavior record."""
+    now_ts = int(datetime.now(timezone.utc).timestamp())
+    return BehaviorRecord(
+        user_id="user_123",
+        behavior_id="beh_001",
+        target="python",
+        intent="PREFERENCE",
+        context="backend",
+        polarity="POSITIVE",
+        credibility=0.8,
+        reinforcement_count=5,
+        state="ACTIVE",
+        created_at=now_ts - 86400 * 10,  # 10 days ago
+        last_seen_at=now_ts - 86400,  # 1 day ago
+        snapshot_updated_at=now_ts,
     )
 
 
 @pytest.fixture
-def sample_snapshot() -> BehaviorSnapshot:
-    """Fixture providing a sample behavior snapshot."""
-    return make_snapshot()
+def behavior_factory():
+    """Factory to create behavior records with custom attributes."""
+    def _create_behavior(
+        user_id: str = "user_123",
+        behavior_id: str = "beh_001",
+        target: str = "python",
+        intent: str = "PREFERENCE",
+        context: str = "backend",
+        polarity: str = "POSITIVE",
+        credibility: float = 0.8,
+        reinforcement_count: int = 5,
+        state: str = "ACTIVE",
+        days_ago: int = 10,
+        last_seen_days_ago: int = 1,
+    ) -> BehaviorRecord:
+        now_ts = int(datetime.now(timezone.utc).timestamp())
+        return BehaviorRecord(
+            user_id=user_id,
+            behavior_id=behavior_id,
+            target=target,
+            intent=intent,
+            context=context,
+            polarity=polarity,
+            credibility=credibility,
+            reinforcement_count=reinforcement_count,
+            state=state,
+            created_at=now_ts - 86400 * days_ago,
+            last_seen_at=now_ts - 86400 * last_seen_days_ago,
+            snapshot_updated_at=now_ts,
+        )
+    return _create_behavior
+
+
+# ============================================================================
+# Conflict Record Fixtures
+# ============================================================================
+
+@pytest.fixture
+def sample_conflict() -> ConflictRecord:
+    """Create a sample conflict record with polarity reversal."""
+    now_ts = int(datetime.now(timezone.utc).timestamp())
+    return ConflictRecord(
+        user_id="user_123",
+        conflict_id="conf_001",
+        behavior_id_1="beh_001",
+        behavior_id_2="beh_002",
+        conflict_type="POLARITY_CONFLICT",  # Align with publisher format
+        resolution_status="AUTO_RESOLVED",
+        old_polarity="POSITIVE",
+        new_polarity="NEGATIVE",
+        old_target=None,
+        new_target=None,
+        created_at=now_ts - 86400 * 5,  # 5 days ago
+    )
 
 
 @pytest.fixture
+def conflict_factory():
+    """Factory to create conflict records with custom attributes."""
+    def _create_conflict(
+        user_id: str = "user_123",
+        conflict_id: str = "conf_001",
+        behavior_id_1: str = "beh_001",
+        behavior_id_2: str = "beh_002",
+        conflict_type: str = "POLARITY_CONFLICT",  # Align with publisher format
+        resolution_status: str = "AUTO_RESOLVED",
+        old_polarity: str = "POSITIVE",
+        new_polarity: str = "NEGATIVE",
+        days_ago: int = 5,
+    ) -> ConflictRecord:
+        now_ts = int(datetime.now(timezone.utc).timestamp())
+        return ConflictRecord(
+            user_id=user_id,
+            conflict_id=conflict_id,
+            behavior_id_1=behavior_id_1,
+            behavior_id_2=behavior_id_2,
+            conflict_type=conflict_type,
+            resolution_status=resolution_status,
+            old_polarity=old_polarity,
+            new_polarity=new_polarity,
+            old_target=None,
+            new_target=None,
+            created_at=now_ts - 86400 * days_ago,
+        )
+    return _create_conflict
+
+
+# ============================================================================
+# Snapshot Fixtures
+# ============================================================================
+
+@pytest.fixture
 def empty_snapshot() -> BehaviorSnapshot:
-    """Fixture providing an empty behavior snapshot."""
-    return make_snapshot(behaviors=[], conflicts=[])
+    """Create an empty snapshot."""
+    now = datetime.now(timezone.utc)
+    return BehaviorSnapshot(
+        user_id="user_123",
+        window_start=now - timedelta(days=30),
+        window_end=now,
+        behaviors=[],
+        conflict_records=[],
+    )
+
+
+@pytest.fixture
+def reference_snapshot(behavior_factory) -> BehaviorSnapshot:
+    """Create a reference snapshot with sample behaviors."""
+    now = datetime.now(timezone.utc)
+    behaviors = [
+        behavior_factory(behavior_id="beh_ref_1", target="python", reinforcement_count=10, days_ago=45),
+        behavior_factory(behavior_id="beh_ref_2", target="java", reinforcement_count=5, days_ago=50),
+        behavior_factory(behavior_id="beh_ref_3", target="docker", reinforcement_count=3, days_ago=40),
+    ]
+    return BehaviorSnapshot(
+        user_id="user_123",
+        window_start=now - timedelta(days=60),
+        window_end=now - timedelta(days=30),
+        behaviors=behaviors,
+        conflict_records=[],
+    )
+
+
+@pytest.fixture
+def current_snapshot(behavior_factory) -> BehaviorSnapshot:
+    """Create a current snapshot with sample behaviors."""
+    now = datetime.now(timezone.utc)
+    behaviors = [
+        behavior_factory(behavior_id="beh_cur_1", target="python", reinforcement_count=15, days_ago=10),
+        behavior_factory(behavior_id="beh_cur_2", target="rust", reinforcement_count=8, days_ago=5),  # New topic
+        behavior_factory(behavior_id="beh_cur_3", target="kubernetes", reinforcement_count=6, days_ago=7),  # New topic
+    ]
+    return BehaviorSnapshot(
+        user_id="user_123",
+        window_start=now - timedelta(days=30),
+        window_end=now,
+        behaviors=behaviors,
+        conflict_records=[],
+    )
+
+
+# ============================================================================
+# Drift Signal Fixtures
+# ============================================================================
+
+@pytest.fixture
+def sample_drift_signal() -> DriftSignal:
+    """Create a sample drift signal."""
+    return DriftSignal(
+        drift_type=DriftType.TOPIC_EMERGENCE,
+        drift_score=0.75,
+        affected_targets=["rust", "kubernetes"],
+        evidence={
+            "emerging_target": "rust",
+            "reinforcement_count": 8,
+        },
+        confidence=0.85,
+    )
+
+
+@pytest.fixture
+def drift_signal_factory():
+    """Factory to create drift signals with custom attributes."""
+    def _create_signal(
+        drift_type: DriftType = DriftType.TOPIC_EMERGENCE,
+        drift_score: float = 0.75,
+        affected_targets: List[str] = None,
+        evidence: dict = None,
+        confidence: float = 0.85,
+    ) -> DriftSignal:
+        return DriftSignal(
+            drift_type=drift_type,
+            drift_score=drift_score,
+            affected_targets=affected_targets or ["target1"],
+            evidence=evidence or {"test": True},
+            confidence=confidence,
+        )
+    return _create_signal
+
+
+# ============================================================================
+# Mock Database Fixtures
+# ============================================================================
+
+@pytest.fixture
+def mock_db_connection():
+    """Create a mock database connection."""
+    conn = MagicMock()
+    cursor = MagicMock()
+    conn.cursor.return_value = cursor
+    cursor.fetchall.return_value = []
+    cursor.fetchone.return_value = None
+    return conn
+
+
+@pytest.fixture
+def mock_behavior_repo(mock_db_connection):
+    """Create a mock behavior repository."""
+    from app.db.repositories.behavior_repo import BehaviorRepository
+    repo = BehaviorRepository(mock_db_connection)
+    return repo

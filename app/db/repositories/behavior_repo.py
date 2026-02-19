@@ -34,34 +34,58 @@ class BehaviorRepository:
         return query
 
     def get_behaviors_in_window(
-        self, user_id: str, start_ts: int, end_ts: int
+        self, user_id: str, start_ts: int, end_ts: int, active_only: bool = True
     ) -> List[BehaviorRecord]:
         """
-        Retrieve all active behaviors for a user within a time window.
+        Retrieve behaviors for a user that were active during a time window.
+
+        A behavior is considered "active during" a window if:
+        - It was created before or during the window (created_at <= end_ts)
+        - It was still being seen during the window (last_seen_at >= start_ts)
 
         Args:
             user_id: User identifier
             start_ts: Window start timestamp (seconds since epoch)
             end_ts: Window end timestamp (seconds since epoch)
+            active_only: If True, only return currently ACTIVE behaviors.
+                        If False, include SUPERSEDED behaviors that were active during the window.
+                        Use False for reference/historical windows.
 
         Returns:
             List of BehaviorRecord objects (empty list if none found)
         """
-        query = """
-            SELECT 
-                user_id, behavior_id, target, intent, context,
-                polarity, credibility, reinforcement_count, state,
-                created_at, last_seen_at, snapshot_updated_at
-            FROM behavior_snapshots
-            WHERE user_id = %s
-              AND created_at BETWEEN %s AND %s
-              AND state = 'ACTIVE'
-            ORDER BY created_at ASC
-        """
+        if active_only:
+            # Current window: only behaviors that are still ACTIVE
+            query = """
+                SELECT 
+                    user_id, behavior_id, target, intent, context,
+                    polarity, credibility, reinforcement_count, state,
+                    created_at, last_seen_at, snapshot_updated_at
+                FROM behavior_snapshots
+                WHERE user_id = %s
+                  AND created_at <= %s
+                  AND last_seen_at >= %s
+                  AND state = 'ACTIVE'
+                ORDER BY created_at ASC
+            """
+        else:
+            # Reference window: include behaviors that were active DURING that window
+            # (even if now superseded)
+            query = """
+                SELECT 
+                    user_id, behavior_id, target, intent, context,
+                    polarity, credibility, reinforcement_count, state,
+                    created_at, last_seen_at, snapshot_updated_at
+                FROM behavior_snapshots
+                WHERE user_id = %s
+                  AND created_at <= %s
+                  AND last_seen_at >= %s
+                ORDER BY created_at ASC
+            """
 
         try:
             cursor = self.connection.cursor()
-            cursor.execute(self._adapt_query(query), (user_id, start_ts, end_ts))
+            cursor.execute(self._adapt_query(query), (user_id, end_ts, start_ts))
             rows = cursor.fetchall()
             cursor.close()
 

@@ -28,13 +28,9 @@ from app.db.connection import get_sync_connection
 from app.db.repositories.scan_job_repo import ScanJobRepository
 from app.core.drift_detector import DriftDetector
 from app.pipeline.drift_event_writer import DriftEventWriter
+from app.utils.time import now
 
 logger = logging.getLogger(__name__)
-
-
-def now() -> int:
-    """Get current UTC timestamp as integer."""
-    return int(datetime.now(timezone.utc).timestamp())
 
 
 class ScanTask(Task):

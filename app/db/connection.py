@@ -12,22 +12,11 @@ from typing import Optional, Union
 from contextlib import asynccontextmanager, contextmanager
 
 from app.config import get_settings
+from app.utils.time import now  # Centralized time utility
 
 # Global connection pool
 _async_pool: Optional[asyncpg.Pool] = None
 _sync_pool: Optional[pool.SimpleConnectionPool] = None
-
-
-# ─── Time Utility ────────────────────────────────────────────────────────
-
-def now() -> int:
-    """
-    Get current UTC time as a unix timestamp integer.
-    
-    Returns:
-        Current timestamp as integer
-    """
-    return int(datetime.now(timezone.utc).timestamp())
 
 
 # ─── Async Database Connection (asyncpg) ─────────────────────────────────

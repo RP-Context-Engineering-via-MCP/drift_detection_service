@@ -274,3 +274,77 @@ class ConflictRepository:
         except Exception as e:
             logger.error(f"Error retrieving all conflicts: {e}")
             raise
+
+    def insert_conflict(
+        self,
+        user_id: str,
+        conflict_id: str,
+        behavior_id_1: str,
+        behavior_id_2: str,
+        conflict_type: str,
+        resolution_status: str,
+        old_polarity: str = None,
+        new_polarity: str = None,
+        old_target: str = None,
+        new_target: str = None,
+        created_at: int = None,
+    ) -> None:
+        """
+        Insert a new conflict snapshot.
+
+        Args:
+            user_id: User identifier
+            conflict_id: Unique conflict identifier
+            behavior_id_1: First behavior involved in conflict
+            behavior_id_2: Second behavior involved in conflict
+            conflict_type: Type of conflict (e.g., TARGET_POLARITY)
+            resolution_status: Resolution status (e.g., USER_RESOLVED, UNRESOLVED)
+            old_polarity: Previous polarity value (optional)
+            new_polarity: New polarity value (optional)
+            old_target: Previous target value (optional)
+            new_target: New target value (optional)
+            created_at: Timestamp of conflict creation (seconds since epoch)
+        """
+        query = """
+            INSERT INTO conflict_snapshots (
+                user_id, conflict_id, conflict_type, behavior_id_1, behavior_id_2,
+                old_target, new_target, old_polarity, new_polarity,
+                resolution_status, created_at
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (user_id, conflict_id) DO UPDATE SET
+                conflict_type = EXCLUDED.conflict_type,
+                behavior_id_1 = EXCLUDED.behavior_id_1,
+                behavior_id_2 = EXCLUDED.behavior_id_2,
+                old_target = EXCLUDED.old_target,
+                new_target = EXCLUDED.new_target,
+                old_polarity = EXCLUDED.old_polarity,
+                new_polarity = EXCLUDED.new_polarity,
+                resolution_status = EXCLUDED.resolution_status
+        """
+
+        try:
+            cursor = self.connection.cursor()
+            cursor.execute(
+                self._adapt_query(query),
+                (
+                    user_id,
+                    conflict_id,
+                    conflict_type,
+                    behavior_id_1,
+                    behavior_id_2,
+                    old_target,
+                    new_target,
+                    old_polarity,
+                    new_polarity,
+                    resolution_status,
+                    created_at,
+                ),
+            )
+            self.connection.commit()
+            cursor.close()
+
+            logger.debug(f"Inserted conflict {conflict_id} for user {user_id}")
+
+        except Exception as e:
+            logger.error(f"Error inserting conflict {conflict_id}: {e}")
+            raise

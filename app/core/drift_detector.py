@@ -1,22 +1,42 @@
 """Main drift detection orchestrator."""
 
 import logging
-from datetime import datetime, timezone
-from typing import List
+from typing import List, Optional
 
-from app.config import get_settings
+from app.config import get_settings, Settings
 from app.core.drift_aggregator import DriftAggregator
 from app.core.snapshot_builder import SnapshotBuilder
 from app.db.connection import get_sync_connection_simple
 from app.db.repositories.drift_event_repo import DriftEventRepository
+from app.detectors.base import BaseDetector
 from app.detectors.context_shift import ContextShiftDetector
 from app.detectors.intensity_shift import IntensityShiftDetector
 from app.detectors.preference_reversal import PreferenceReversalDetector
 from app.detectors.topic_abandonment import TopicAbandonmentDetector
 from app.detectors.topic_emergence import TopicEmergenceDetector
 from app.models.drift import DriftEvent
+from app.utils.time import now
 
 logger = logging.getLogger(__name__)
+
+
+def _create_default_detectors(settings: Optional[Settings] = None) -> List[BaseDetector]:
+    """
+    Create the default set of drift detectors.
+    
+    Args:
+        settings: Optional settings to pass to detectors
+        
+    Returns:
+        List of detector instances
+    """
+    return [
+        TopicEmergenceDetector(settings),
+        TopicAbandonmentDetector(settings),
+        PreferenceReversalDetector(settings),
+        IntensityShiftDetector(settings),
+        ContextShiftDetector(settings),
+    ]
 
 
 class DriftDetector:
@@ -25,24 +45,41 @@ class DriftDetector:
 
     Coordinates snapshot building, detector execution, signal aggregation,
     and event persistence.
+    
+    Supports dependency injection for testing and flexibility:
+        - snapshot_builder: Custom SnapshotBuilder instance
+        - aggregator: Custom DriftAggregator instance
+        - connection: Database connection
+        - detectors: Custom list of detectors
+        - settings: Configuration settings
     """
 
-    def __init__(self):
-        """Initialize orchestrator with all components."""
-        self.snapshot_builder = SnapshotBuilder()
-        self.aggregator = DriftAggregator()
-        self.connection = get_sync_connection_simple()
+    def __init__(
+        self,
+        snapshot_builder: Optional[SnapshotBuilder] = None,
+        aggregator: Optional[DriftAggregator] = None,
+        connection=None,
+        detectors: Optional[List[BaseDetector]] = None,
+        settings: Optional[Settings] = None,
+    ):
+        """
+        Initialize orchestrator with all components.
+        
+        Args:
+            snapshot_builder: Optional SnapshotBuilder instance (creates new if None)
+            aggregator: Optional DriftAggregator instance (creates new if None)
+            connection: Optional database connection (creates new if None)
+            detectors: Optional list of detectors (uses defaults if None)
+            settings: Optional settings (loads from env if None)
+        """
+        self.settings = settings or get_settings()
+        self.snapshot_builder = snapshot_builder or SnapshotBuilder()
+        self.aggregator = aggregator or DriftAggregator()
+        self.connection = connection or get_sync_connection_simple()
         self.drift_event_repo = DriftEventRepository(self.connection)
-        self.settings = get_settings()
 
-        # Initialize all detectors
-        self.detectors = [
-            TopicEmergenceDetector(),
-            TopicAbandonmentDetector(),
-            PreferenceReversalDetector(),
-            IntensityShiftDetector(),
-            ContextShiftDetector(),
-        ]
+        # Initialize detectors (use provided or create defaults)
+        self.detectors = detectors or _create_default_detectors(self.settings)
 
         logger.info(
             f"DriftDetector initialized with {len(self.detectors)} detectors"
@@ -181,7 +218,7 @@ class DriftDetector:
             user_id
         )
         if last_detection:
-            now_ts = int(datetime.now(timezone.utc).timestamp())
+            now_ts = now()
             time_since = now_ts - last_detection
             cooldown = self.settings.scan_cooldown_seconds
 
@@ -212,7 +249,7 @@ class DriftDetector:
             List of DriftEvent objects
         """
         events = []
-        detected_at = int(datetime.now(timezone.utc).timestamp())
+        detected_at = now()
 
         for signal in signals:
             event = DriftEvent.from_signal(

@@ -18,13 +18,9 @@ from datetime import datetime, timezone
 from app.config import get_settings
 from app.db.connection import get_sync_connection
 from app.db.repositories import BehaviorRepository, ConflictRepository, ScanJobRepository
+from app.utils.time import now
 
 logger = logging.getLogger(__name__)
-
-
-def now() -> int:
-    """Get current UTC timestamp as integer."""
-    return int(datetime.now(timezone.utc).timestamp())
 
 
 class BehaviorEventHandler:
@@ -61,16 +57,22 @@ class BehaviorEventHandler:
             logger.warning(f"Event {event_id} missing event_type, skipping")
             return
 
+        # payload may be a nested dict (already parsed by redis_consumer)
+        # or the fields may sit at the top level — support both shapes
+        payload = event_data.get("payload", event_data)
+        if isinstance(payload, str):
+            payload = json.loads(payload)
+
         try:
             # Route to appropriate handler
             if event_type == "behavior.created":
-                self._on_behavior_created(event_data)
+                processed = self._on_behavior_created(payload)
             elif event_type == "behavior.reinforced":
-                self._on_behavior_reinforced(event_data)
+                processed = self._on_behavior_reinforced(payload)
             elif event_type == "behavior.superseded":
-                self._on_behavior_superseded(event_data)
+                processed = self._on_behavior_superseded(payload)
             elif event_type == "behavior.conflict.resolved":
-                self._on_conflict_resolved(event_data)
+                processed = self._on_conflict_resolved(payload)
             else:
                 logger.warning(f"Unknown event type: {event_type}")
                 return
@@ -78,17 +80,23 @@ class BehaviorEventHandler:
             # Mark as processed
             self._mark_processed(event_id)
             
-            logger.info(f"Successfully processed event {event_id} ({event_type})")
+            if processed:
+                logger.info(f"Successfully processed event {event_id} ({event_type})")
+            else:
+                logger.info(f"Event {event_id} ({event_type}) skipped due to missing required fields")
 
         except Exception as e:
             logger.error(f"Failed to process event {event_id}: {e}", exc_info=True)
             raise
 
-    def _on_behavior_created(self, event_data: Dict[str, Any]) -> None:
+    def _on_behavior_created(self, event_data: Dict[str, Any]) -> bool:
         """
         Handle behavior.created event.
 
         Inserts a new behavior snapshot and potentially enqueues a drift scan.
+
+        Returns:
+            bool: True if event was processed, False if skipped due to missing fields.
 
         Expected payload:
         {
@@ -108,12 +116,14 @@ class BehaviorEventHandler:
 
         if not user_id or not behavior_id:
             logger.warning("behavior.created event missing user_id or behavior_id")
-            return
+            return False
 
         with get_sync_connection() as conn:
             behavior_repo = BehaviorRepository(conn)
 
             # Upsert behavior snapshot
+            # Use payload values when provided, with sensible defaults
+            created_at = event_data.get("created_at", now())
             behavior_repo.upsert_behavior(
                 user_id=user_id,
                 behavior_id=behavior_id,
@@ -122,10 +132,10 @@ class BehaviorEventHandler:
                 context=event_data.get("context", ""),
                 polarity=event_data.get("polarity", "NEUTRAL"),
                 credibility=event_data.get("credibility", 0.5),
-                reinforcement_count=1,
-                state="ACTIVE",
-                created_at=event_data.get("created_at", now()),
-                last_seen_at=event_data.get("created_at", now())
+                reinforcement_count=event_data.get("reinforcement_count", 1),
+                state=event_data.get("state", "ACTIVE"),
+                created_at=created_at,
+                last_seen_at=event_data.get("last_seen_at", created_at)
             )
 
             # Maybe enqueue scan
@@ -135,7 +145,9 @@ class BehaviorEventHandler:
                 trigger_event="behavior.created"
             )
 
-    def _on_behavior_reinforced(self, event_data: Dict[str, Any]) -> None:
+        return True
+
+    def _on_behavior_reinforced(self, event_data: Dict[str, Any]) -> bool:
         """
         Handle behavior.reinforced event.
 
@@ -154,12 +166,11 @@ class BehaviorEventHandler:
 
         if not user_id or not behavior_id:
             logger.warning("behavior.reinforced event missing user_id or behavior_id")
-            return
+            return False
 
         with get_sync_connection() as conn:
             behavior_repo = BehaviorRepository(conn)
 
-            # Get current behavior
             behavior = behavior_repo.get_behavior(user_id, behavior_id)
             
             if not behavior:
@@ -167,17 +178,19 @@ class BehaviorEventHandler:
                     f"Cannot reinforce behavior {behavior_id} for user {user_id}: "
                     "behavior not found"
                 )
-                return
+                return False
 
-            # Update reinforcement count and last_seen_at
-            new_count = behavior["reinforcement_count"] + 1
-            occurred_at = event_data.get("occurred_at", now())
+            # Use values from event directly — BRM already computed these
+            new_count = event_data.get("new_reinforcement_count", behavior["reinforcement_count"] + 1)
+            new_credibility = event_data.get("new_credibility", behavior["credibility"])
+            last_seen_at = event_data.get("last_seen_at", now())
 
             behavior_repo.update_behavior(
                 user_id=user_id,
                 behavior_id=behavior_id,
+                credibility=new_credibility,
                 reinforcement_count=new_count,
-                last_seen_at=occurred_at
+                last_seen_at=last_seen_at
             )
 
             # Maybe enqueue scan
@@ -187,11 +200,16 @@ class BehaviorEventHandler:
                 trigger_event="behavior.reinforced"
             )
 
-    def _on_behavior_superseded(self, event_data: Dict[str, Any]) -> None:
+        return True
+
+    def _on_behavior_superseded(self, event_data: Dict[str, Any]) -> bool:
         """
         Handle behavior.superseded event.
 
         Updates behavior state to SUPERSEDED.
+
+        Returns:
+            bool: True if event was processed, False if skipped due to missing fields.
 
         Expected payload:
         {
@@ -202,11 +220,11 @@ class BehaviorEventHandler:
         }
         """
         user_id = event_data.get("user_id")
-        behavior_id = event_data.get("behavior_id")
+        behavior_id = event_data.get("old_behavior_id")  # correct field from event schema
 
         if not user_id or not behavior_id:
-            logger.warning("behavior.superseded event missing user_id or behavior_id")
-            return
+            logger.warning("behavior.superseded event missing user_id or old_behavior_id")
+            return False
 
         with get_sync_connection() as conn:
             behavior_repo = BehaviorRepository(conn)
@@ -225,11 +243,16 @@ class BehaviorEventHandler:
                 trigger_event="behavior.superseded"
             )
 
-    def _on_conflict_resolved(self, event_data: Dict[str, Any]) -> None:
+        return True
+
+    def _on_conflict_resolved(self, event_data: Dict[str, Any]) -> bool:
         """
         Handle behavior.conflict.resolved event.
 
         Inserts a conflict snapshot and potentially enqueues a drift scan.
+
+        Returns:
+            bool: True if event was processed, False if skipped due to missing fields.
 
         Expected payload:
         {
@@ -250,7 +273,7 @@ class BehaviorEventHandler:
 
         if not user_id or not conflict_id:
             logger.warning("conflict.resolved event missing user_id or conflict_id")
-            return
+            return False
 
         with get_sync_connection() as conn:
             conflict_repo = ConflictRepository(conn)
@@ -277,6 +300,8 @@ class BehaviorEventHandler:
                 trigger_event="behavior.conflict.resolved",
                 priority="HIGH"  # Conflicts get high priority
             )
+
+        return True
 
     def _maybe_enqueue_scan(
         self,

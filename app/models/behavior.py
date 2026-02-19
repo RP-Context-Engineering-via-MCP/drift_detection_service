@@ -135,8 +135,8 @@ class ConflictRecord:
     conflict_id: str
     behavior_id_1: str
     behavior_id_2: str
-    conflict_type: str  # RESOLVABLE | USER_DECISION_NEEDED
-    resolution_status: str  # AUTO_RESOLVED | PENDING | USER_RESOLVED
+    conflict_type: str  # POLARITY_CONFLICT | TARGET_CONFLICT | CONTEXT_CONFLICT
+    resolution_status: str  # AUTO_RESOLVED | PENDING | USER_RESOLVED | UNRESOLVED
     old_polarity: Optional[str]  # For preference reversals
     new_polarity: Optional[str]
     old_target: Optional[str]  # For target migrations
@@ -145,13 +145,17 @@ class ConflictRecord:
     
     def __post_init__(self):
         """Validate field values after initialization."""
-        # Validate conflict type
-        valid_types = ["RESOLVABLE", "USER_DECISION_NEEDED"]
+        # Validate conflict type (from publisher: POLARITY_CONFLICT, TARGET_CONFLICT, etc.)
+        # Also accept legacy values: RESOLVABLE, USER_DECISION_NEEDED
+        valid_types = [
+            "POLARITY_CONFLICT", "TARGET_CONFLICT", "CONTEXT_CONFLICT",  # Publisher format
+            "RESOLVABLE", "USER_DECISION_NEEDED",  # Legacy/internal format
+        ]
         if self.conflict_type not in valid_types:
             raise ValueError(f"Conflict type must be one of {valid_types}, got {self.conflict_type}")
         
         # Validate resolution status
-        valid_statuses = ["AUTO_RESOLVED", "PENDING", "USER_RESOLVED"]
+        valid_statuses = ["AUTO_RESOLVED", "PENDING", "USER_RESOLVED", "UNRESOLVED"]
         if self.resolution_status not in valid_statuses:
             raise ValueError(f"Resolution status must be one of {valid_statuses}, got {self.resolution_status}")
         

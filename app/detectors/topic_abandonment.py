@@ -154,7 +154,9 @@ class TopicAbandonmentDetector(BaseDetector):
         """
         reference_topics = {}
         
-        for behavior in reference.get_active_behaviors():
+        # Use _get_relevant_behaviors() to include superseded behaviors
+        # in reference/historical windows
+        for behavior in reference._get_relevant_behaviors():
             if behavior.target not in reference_topics:
                 reference_topics[behavior.target] = {
                     "reinforcement_count": 0,
