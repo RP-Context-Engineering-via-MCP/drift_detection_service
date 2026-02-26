@@ -196,18 +196,9 @@ class DriftEventWriter:
         
         Event format:
         {
-            "event_type": "drift.detected",
-            "drift_event_id": "drift_abc123",
-            "user_id": "user_123",
-            "drift_type": "TOPIC_EMERGENCE",
-            "drift_score": 0.85,
-            "confidence": 0.92,
-            "severity": "MEDIUM",
-            "affected_targets": ["Python", "Docker"],
-            "detected_at": 1234567890,
-            "evidence": {...},
-            "reference_window": {"start": 123, "end": 456},
-            "current_window": {"start": 789, "end": 101112}
+            "drift_event_id": "drift-evt-abc123",
+            "user_id": "550e8400-e29b-41d4-a716-446655440000",
+            "severity": "STRONG"
         }
         
         Args:
@@ -221,37 +212,12 @@ class DriftEventWriter:
         Raises:
             redis.RedisError: If publishing fails
         """
-        # Build event payload
+        # Build simplified event payload for drift.events stream
         event_data = {
-            "event_type": "drift.detected",
             "drift_event_id": event.drift_event_id,
             "user_id": event.user_id,
-            "drift_type": event.drift_type.value,
-            "drift_score": event.drift_score,
-            "confidence": event.confidence,
-            "severity": event.severity.value,
-            "affected_targets": event.affected_targets,
-            "detected_at": event.detected_at,
-            "reference_window": {
-                "start": event.reference_window_start,
-                "end": event.reference_window_end
-            },
-            "current_window": {
-                "start": event.current_window_start,
-                "end": event.current_window_end
-            }
+            "severity": event.severity.value
         }
-        
-        # Add evidence (serialize to JSON string for Redis)
-        if event.evidence:
-            event_data["evidence"] = json.dumps(event.evidence)
-        
-        # Add snapshot context if provided
-        if reference_snapshot:
-            event_data["reference_behavior_count"] = len(reference_snapshot.behaviors)
-        
-        if current_snapshot:
-            event_data["current_behavior_count"] = len(current_snapshot.behaviors)
         
         try:
             # Publish to Redis Stream
