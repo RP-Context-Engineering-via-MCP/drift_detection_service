@@ -119,6 +119,12 @@ async def reap_dead_letters() -> int:
                 
                 # Move to dead letter stream
                 dead_letter_stream = f"{settings.redis_stream_behavior_events}.deadletter"
+                
+                logger.info(
+                    f"Publishing failed message {msg_id} to dead letter stream "
+                    f"'{dead_letter_stream}' (attempts: {delivery_count}, idle: {idle_ms}ms)"
+                )
+                
                 await redis_client.xadd(
                     name=dead_letter_stream,
                     fields=dead_letter_data,
@@ -135,7 +141,7 @@ async def reap_dead_letters() -> int:
                 dead_count += 1
                 
                 logger.info(
-                    f"Moved message {msg_id} to dead letter queue "
+                    f"Successfully moved message {msg_id} to dead letter queue "
                     f"(stream: {dead_letter_stream})"
                 )
                 

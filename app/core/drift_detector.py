@@ -8,6 +8,7 @@ from app.core.drift_aggregator import DriftAggregator
 from app.core.snapshot_builder import SnapshotBuilder
 from app.db.connection import get_sync_connection_simple
 from app.db.repositories.drift_event_repo import DriftEventRepository
+from app.pipeline.drift_event_writer import DriftEventWriter
 from app.detectors.base import BaseDetector
 from app.detectors.context_shift import ContextShiftDetector
 from app.detectors.intensity_shift import IntensityShiftDetector
@@ -77,6 +78,7 @@ class DriftDetector:
         self.aggregator = aggregator or DriftAggregator()
         self.connection = connection or get_sync_connection_simple()
         self.drift_event_repo = DriftEventRepository(self.connection)
+        self.drift_event_writer = DriftEventWriter(self.connection)
 
         # Initialize detectors (use provided or create defaults)
         self.detectors = detectors or _create_default_detectors(self.settings)
@@ -273,14 +275,17 @@ class DriftDetector:
 
     def _persist_events(self, events: List[DriftEvent]) -> None:
         """
-        Persist drift events to database.
+        Persist drift events to database and publish to Redis Streams.
 
         Args:
-            events: DriftEvent objects to persist
+            events: DriftEvent objects to persist and publish
         """
         for event in events:
             try:
-                event_id = self.drift_event_repo.insert(event)
+                event_id = self.drift_event_writer.write_single(
+                    event=event,
+                    publish_to_stream=True
+                )
                 logger.info(
                     f"Persisted drift event: {event_id} "
                     f"({event.drift_type.value})"

@@ -194,11 +194,14 @@ class DriftEventWriter:
         """
         Publish a drift.detected event to Redis Streams.
         
-        Event format:
+        Event format (published as 'payload' field):
+        XADD drift.events * payload '{"drift_event_id": "...", "user_id": "...", "severity": "..."}'
+        
+        Payload JSON structure:
         {
             "drift_event_id": "drift-evt-abc123",
             "user_id": "550e8400-e29b-41d4-a716-446655440000",
-            "severity": "STRONG"
+            "severity": "STRONG_DRIFT"
         }
         
         Args:
@@ -219,19 +222,25 @@ class DriftEventWriter:
             "severity": event.severity.value
         }
         
+        logger.debug(
+            f"Publishing event to stream '{self.stream_name}': {event_data}"
+        )
+        
         try:
             # Publish to Redis Stream
             # XADD returns the message ID (e.g., "1234567890123-0")
+            # Wrap in 'payload' field as JSON string to match consumer format
             message_id = self.redis_client.xadd(
                 name=self.stream_name,
-                fields=event_data,
+                fields={"payload": json.dumps(event_data)},
                 maxlen=10000,  # Keep last 10k events to prevent unbounded growth
                 approximate=True
             )
             
             logger.info(
                 f"Published drift event {event.drift_event_id} to stream "
-                f"'{self.stream_name}' with message ID: {message_id}"
+                f"'{self.stream_name}' with message ID: {message_id} "
+                f"(severity: {event.severity.value})"
             )
             
             return message_id
