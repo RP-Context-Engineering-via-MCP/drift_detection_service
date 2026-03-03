@@ -146,29 +146,32 @@ class RedisConsumer:
                 try:
                     self._consume_batch()
                 except redis.ConnectionError as e:
-                    logger.error(f"Redis connection error: {e}")
-                    self._reconnect()
+                    if self.running:
+                        logger.error(f"Redis connection error: {e}")
+                        self._reconnect()
+                    # else: shutdown in progress, connection closed intentionally
                 except Exception as e:
                     logger.error(f"Error in consumption loop: {e}", exc_info=True)
-                    time.sleep(5)  # Back off before retrying
+                    if self.running:
+                        time.sleep(5)  # Back off before retrying
             
             logger.info("Consumer stopped")
             
         except KeyboardInterrupt:
             logger.info("Received keyboard interrupt")
         finally:
-            self.stop()
+            self.disconnect()
 
     def stop(self) -> None:
         """Stop the consumer gracefully."""
-        logger.info("Stopping consumer...")
-        self.running = False
-        self.disconnect()
+        if self.running:
+            logger.info("Stopping consumer...")
+            self.running = False
 
     def _signal_handler(self, signum, frame):
         """Handle shutdown signals (SIGINT, SIGTERM)."""
         logger.info(f"Received signal {signum}, initiating graceful shutdown")
-        self.stop()
+        self.running = False
 
     def _reconnect(self) -> None:
         """
@@ -204,8 +207,8 @@ class RedisConsumer:
 
         Uses XREADGROUP to read events assigned to this consumer.
         """
-        if not self.redis_client:
-            raise RuntimeError("Redis client not connected")
+        if not self.redis_client or not self.running:
+            return
 
         try:
             # Read events from the stream using consumer group
@@ -226,12 +229,22 @@ class RedisConsumer:
             # Response format: [(stream_name, [(event_id, event_data), ...])]
             for stream_name, events in response:
                 for event_id, event_data in events:
+                    if not self.running:
+                        # Shutdown requested during processing
+                        return
                     self._process_event(event_id, event_data)
             
         except redis.ConnectionError:
             raise  # Let the caller handle reconnection
-        except Exception as e:
+        except (OSError, ValueError) as e:
+            # Handle shutdown errors (closed socket, closed file descriptor)
+            if not self.running:
+                # Expected during shutdown
+                return
             logger.error(f"Error consuming batch: {e}", exc_info=True)
+        except Exception as e:
+            if self.running:
+                logger.error(f"Error consuming batch: {e}", exc_info=True)
 
     def _process_event(self, event_id: str, event_data: Dict[str, str]) -> None:
         """
@@ -370,5 +383,6 @@ def main():
     consumer.start()
 
 
+# Only run if executed directly, not imported
 if __name__ == "__main__":
     main()

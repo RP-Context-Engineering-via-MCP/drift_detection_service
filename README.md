@@ -118,7 +118,27 @@ The Drift Detection Service analyzes user behavior patterns over time to identif
 
 ### Using Docker Compose (Recommended)
 
+This service uses a **shared Redis instance** on a Docker external network (`shared-network`). This allows multiple microservices to share the same Redis for message passing.
+
+#### Prerequisites
+
+1. **Create the shared network** (if not already exists):
+   ```bash
+   docker network create shared-network
+   ```
+
+2. **Ensure shared-redis is running** on the shared-network:
+   ```bash
+   # Example: Start a shared Redis container
+   docker run -d --name shared-redis --network shared-network -p 6379:6379 redis:7-alpine
+   ```
+
+#### Start Services
+
 ```bash
+# Create shared-network (if needed)
+make network
+
 # Start all services
 docker-compose up -d
 
@@ -129,6 +149,15 @@ docker-compose logs -f api
 docker-compose down
 ```
 
+#### Redis Configuration
+
+When running with Docker Compose, the services connect to:
+- **Redis URL**: `redis://shared-redis:6379/0`
+- **Celery Broker**: `redis://shared-redis:6379/1`
+- **Celery Backend**: `redis://shared-redis:6379/2`
+
+For local development (without Docker), use `localhost` URLs in your `.env` file.
+
 ## Configuration
 
 Configuration is managed via environment variables. See [app/config.py](app/config.py) for all options.
@@ -138,7 +167,7 @@ Configuration is managed via environment variables. See [app/config.py](app/conf
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `DATABASE_URL` | PostgreSQL connection string | Required |
-| `REDIS_URL` | Redis connection URL | `redis://localhost:6379/0` |
+| `REDIS_URL` | Redis connection URL | `redis://localhost:6379/0` (local) / `redis://shared-redis:6379/0` (Docker) |
 | `DRIFT_SCORE_THRESHOLD` | Minimum score to create event | `0.6` |
 | `MIN_BEHAVIORS_FOR_DRIFT` | Minimum behaviors for detection | `5` |
 | `SCAN_COOLDOWN_SECONDS` | Cooldown between user scans | `3600` |

@@ -155,15 +155,8 @@ class TopicEmergenceDetector(BaseDetector):
         behaviors = current.get_behaviors_by_target(target)
         reinforcement = sum(b.reinforcement_count for b in behaviors)
         
-        # Calculate base score: relative importance in current window
-        total_reinforcements = sum(
-            b.reinforcement_count for b in current.get_active_behaviors()
-        )
-        
-        if total_reinforcements > 0:
-            base_score = reinforcement / total_reinforcements
-        else:
-            base_score = 0.0
+        # Calculate average credibility for this target
+        avg_credibility = sum(b.credibility for b in behaviors) / len(behaviors)
         
         # Calculate recency weight: more recent = stronger signal
         now_ts = int(datetime.now().timestamp())
@@ -175,15 +168,18 @@ class TopicEmergenceDetector(BaseDetector):
         # 0 days ago = 1.0, recency_weight_days ago = 0.1
         recency_weight = max(0.1, 1.0 - (avg_days_ago / self.recency_weight_days))
         
-        # Final drift score combines importance and recency
-        drift_score = base_score * recency_weight
+        # Calculate reinforcement weight: 4+ reinforcements = max score
+        # This rewards topics with stronger engagement
+        reinforcement_weight = min(reinforcement / 4.0, 1.0)
+        
+        # Final drift score combines reinforcement strength, credibility, and recency
+        # This approach avoids the "dilution" problem where many emerging topics
+        # each get tiny scores when using relative importance
+        drift_score = reinforcement_weight * avg_credibility * recency_weight
         
         # Confidence based on reinforcement strength
         # More reinforcement = more confident it's a real trend
         confidence = min(reinforcement / 5.0, 1.0)  # Normalize (5+ is high confidence)
-        
-        # Calculate average credibility
-        avg_credibility = sum(b.credibility for b in behaviors) / len(behaviors)
         
         # Create evidence dictionary
         evidence = {
@@ -193,7 +189,7 @@ class TopicEmergenceDetector(BaseDetector):
             "avg_credibility": round(avg_credibility, 3),
             "avg_days_since_mention": round(avg_days_ago, 1),
             "recency_weight": round(recency_weight, 3),
-            "relative_importance": round(base_score, 3),
+            "reinforcement_weight": round(reinforcement_weight, 3),
             "contexts": sorted(list(current.get_contexts_for_target(target))),
         }
         

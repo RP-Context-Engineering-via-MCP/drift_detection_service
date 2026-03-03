@@ -2,26 +2,6 @@ version: '3.8'
 
 services:
   # ─────────────────────────────────────────────────────────────────────────
-  # Redis - Message broker, cache, and task queue backend
-  # ─────────────────────────────────────────────────────────────────────────
-  redis:
-    image: redis:7.2-alpine
-    container_name: drift-redis
-    ports:
-      - "6379:6379"
-    volumes:
-      - redis_data:/data
-    command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    restart: unless-stopped
-    networks:
-      - drift-network
-
-  # ─────────────────────────────────────────────────────────────────────────
   # API Service - FastAPI application with scheduler
   # ─────────────────────────────────────────────────────────────────────────
   api:
@@ -40,24 +20,21 @@ services:
       # Database (Supabase or local PostgreSQL)
       - DATABASE_URL=${DATABASE_URL}
       
-      # Redis
-      - REDIS_URL=redis://redis:6379/0
+      # Redis - now pointing to shared-redis
+      - REDIS_URL=redis://shared-redis:6379/0
       - REDIS_STREAM_BEHAVIOR_EVENTS=behavior.events
       - REDIS_STREAM_DRIFT_EVENTS=drift.events
       - REDIS_CONSUMER_GROUP=drift_detection_service
       - REDIS_CONSUMER_NAME=api_consumer
       
       # Celery
-      - CELERY_BROKER_URL=redis://redis:6379/1
-      - CELERY_RESULT_BACKEND=redis://redis:6379/2
+      - CELERY_BROKER_URL=redis://shared-redis:6379/1
+      - CELERY_RESULT_BACKEND=redis://shared-redis:6379/2
       
       # Thresholds
       - MIN_BEHAVIORS_FOR_DRIFT=${MIN_BEHAVIORS_FOR_DRIFT:-5}
       - MIN_DAYS_OF_HISTORY=${MIN_DAYS_OF_HISTORY:-14}
       - SCAN_COOLDOWN_SECONDS=${SCAN_COOLDOWN_SECONDS:-3600}
-    depends_on:
-      redis:
-        condition: service_healthy
     healthcheck:
       test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8000/api/v1/health', timeout=5)"]
       interval: 30s
@@ -66,10 +43,7 @@ services:
       start_period: 40s
     restart: unless-stopped
     networks:
-      - drift-network
-    # volumes:
-      # Mount for development (optional - comment out for production)
-      # - .:/app
+      - shared-network
 
   # ─────────────────────────────────────────────────────────────────────────
   # Worker Service - Celery worker for background scan jobs
@@ -89,23 +63,20 @@ services:
       # Database
       - DATABASE_URL=${DATABASE_URL}
       
-      # Redis
-      - REDIS_URL=redis://redis:6379/0
+      # Redis - now pointing to shared-redis
+      - REDIS_URL=redis://shared-redis:6379/0
       - REDIS_STREAM_BEHAVIOR_EVENTS=behavior.events
       - REDIS_STREAM_DRIFT_EVENTS=drift.events
       
       # Celery
-      - CELERY_BROKER_URL=redis://redis:6379/1
-      - CELERY_RESULT_BACKEND=redis://redis:6379/2
+      - CELERY_BROKER_URL=redis://shared-redis:6379/1
+      - CELERY_RESULT_BACKEND=redis://shared-redis:6379/2
       - CELERY_WORKER_PREFETCH_MULTIPLIER=1
       - CELERY_WORKER_MAX_TASKS_PER_CHILD=100
       
       # Thresholds
       - MIN_BEHAVIORS_FOR_DRIFT=${MIN_BEHAVIORS_FOR_DRIFT:-5}
       - MIN_DAYS_OF_HISTORY=${MIN_DAYS_OF_HISTORY:-14}
-    depends_on:
-      redis:
-        condition: service_healthy
     healthcheck:
       test: ["CMD", "celery", "-A", "app.workers.celery_app", "inspect", "ping"]
       interval: 30s
@@ -114,7 +85,7 @@ services:
       start_period: 60s
     restart: unless-stopped
     networks:
-      - drift-network
+      - shared-network
     deploy:
       replicas: 1
       resources:
@@ -133,7 +104,7 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: drift-consumer
-    command: python -m app.consumer.redis_consumer
+    command: python -m app.consumer
     environment:
       # Application
       - ENVIRONMENT=production
@@ -143,8 +114,8 @@ services:
       # Database
       - DATABASE_URL=${DATABASE_URL}
       
-      # Redis
-      - REDIS_URL=redis://redis:6379/0
+      # Redis - now pointing to shared-redis
+      - REDIS_URL=redis://shared-redis:6379/0
       - REDIS_STREAM_BEHAVIOR_EVENTS=behavior.events
       - REDIS_CONSUMER_GROUP=drift_detection_service
       - REDIS_CONSUMER_NAME=consumer_1
@@ -152,18 +123,15 @@ services:
       - REDIS_MAX_EVENTS_PER_READ=10
       
       # Celery
-      - CELERY_BROKER_URL=redis://redis:6379/1
-      - CELERY_RESULT_BACKEND=redis://redis:6379/2
+      - CELERY_BROKER_URL=redis://shared-redis:6379/1
+      - CELERY_RESULT_BACKEND=redis://shared-redis:6379/2
       
       # Thresholds
       - MIN_BEHAVIORS_FOR_DRIFT=${MIN_BEHAVIORS_FOR_DRIFT:-5}
       - SCAN_COOLDOWN_SECONDS=${SCAN_COOLDOWN_SECONDS:-3600}
-    depends_on:
-      redis:
-        condition: service_healthy
     restart: unless-stopped
     networks:
-      - drift-network
+      - shared-network
     deploy:
       resources:
         limits:
@@ -173,42 +141,10 @@ services:
           cpus: '0.25'
           memory: 256M
 
-  # ─────────────────────────────────────────────────────────────────────────
-  # Optional: Local PostgreSQL (use if not using Supabase)
-  # ─────────────────────────────────────────────────────────────────────────
-  # postgres:
-  #   image: postgres:15-alpine
-  #   container_name: drift-postgres
-  #   environment:
-  #     - POSTGRES_DB=drift_detection
-  #     - POSTGRES_USER=drift_user
-  #     - POSTGRES_PASSWORD=drift_password
-  #   ports:
-  #     - "5432:5432"
-  #   volumes:
-  #     - postgres_data:/var/lib/postgresql/data
-  #   healthcheck:
-  #     test: ["CMD-SHELL", "pg_isready -U drift_user -d drift_detection"]
-  #     interval: 10s
-  #     timeout: 5s
-  #     retries: 5
-  #   restart: unless-stopped
-  #   networks:
-  #     - drift-network
-
 # ─────────────────────────────────────────────────────────────────────────────
-# Networks
+# Networks - Join the shared external network
 # ─────────────────────────────────────────────────────────────────────────────
 networks:
-  drift-network:
-    driver: bridge
-    name: drift-network
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Volumes
-# ─────────────────────────────────────────────────────────────────────────────
-volumes:
-  redis_data:
-    name: drift-redis-data
-  # postgres_data:
-  #   name: drift-postgres-data
+  shared-network:
+    external: true
+    name: shared-network

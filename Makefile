@@ -42,9 +42,10 @@ help:
 	@echo "    make worker-active - Show active tasks"
 	@echo "    make scale-workers N=3 - Scale workers to N instances"
 	@echo ""
-	@echo "  Redis:"
+	@echo "  Redis (shared-redis on shared-network):"
 	@echo "    make redis-cli   - Open Redis CLI"
 	@echo "    make redis-info  - Show Redis info"
+	@echo "    make network     - Create shared-network if not exists"
 	@echo ""
 	@echo "  Cleanup:"
 	@echo "    make clean       - Stop and remove containers"
@@ -114,9 +115,6 @@ logs-worker:
 logs-consumer:
 	docker-compose logs -f consumer
 
-logs-redis:
-	docker-compose logs -f redis
-
 status:
 	@echo "📊 Service Status:"
 	@docker-compose ps
@@ -126,7 +124,7 @@ status:
 
 stats:
 	@echo "📈 Resource Usage:"
-	@docker stats --no-stream drift-api drift-worker drift-consumer drift-redis
+	@docker stats --no-stream drift-api drift-worker drift-consumer
 
 # ─── Development ─────────────────────────────────────────────────────────────
 
@@ -173,21 +171,27 @@ scale-workers:
 # ─── Redis ───────────────────────────────────────────────────────────────────
 
 redis-cli:
-	@echo "🔴 Opening Redis CLI..."
-	docker exec -it drift-redis redis-cli
+	@echo "🔴 Opening Redis CLI (shared-redis)..."
+	docker exec -it shared-redis redis-cli
 
 redis-info:
-	@echo "ℹ️  Redis Info:"
-	docker exec drift-redis redis-cli info
+	@echo "ℹ️  Redis Info (shared-redis):"
+	docker exec shared-redis redis-cli info
 
 redis-streams:
-	@echo "📡 Redis Streams Info:"
+	@echo "📡 Redis Streams Info (shared-redis):"
 	@echo ""
 	@echo "Behavior Events Stream:"
-	@docker exec drift-redis redis-cli XINFO STREAM behavior.events || echo "Stream does not exist yet"
+	@docker exec shared-redis redis-cli XINFO STREAM behavior.events || echo "Stream does not exist yet"
 	@echo ""
 	@echo "Drift Events Stream:"
-	@docker exec drift-redis redis-cli XINFO STREAM drift.events || echo "Stream does not exist yet"
+	@docker exec shared-redis redis-cli XINFO STREAM drift.events || echo "Stream does not exist yet"
+
+network:
+	@echo "🌐 Checking shared-network..."
+	@docker network inspect shared-network >/dev/null 2>&1 || \
+		(docker network create shared-network && echo "✓ Created shared-network") && \
+		echo "✓ shared-network exists"
 
 # ─── Cleanup ─────────────────────────────────────────────────────────────────
 
