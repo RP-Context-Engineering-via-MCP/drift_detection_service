@@ -86,8 +86,9 @@ class TopicAbandonmentDetector(BaseDetector):
         )
         
         # Step 2: Check which topics are abandoned in current window
-        now_ts = int(datetime.now().timestamp())
-        silence_threshold_ts = now_ts - (self.silence_threshold * 86400)
+        # Use milliseconds to match database timestamp format
+        now_ts = int(datetime.now().timestamp() * 1000)
+        silence_threshold_ts = now_ts - (self.silence_threshold * 86400 * 1000)
         
         for target, data in active_topics.items():
             # Check if target is still active in current snapshot
@@ -109,7 +110,8 @@ class TopicAbandonmentDetector(BaseDetector):
             )
             signals.append(signal)
             
-            days_silent = (now_ts - data["last_seen_at"]) / 86400
+            # Convert to days for logging (timestamps are in milliseconds)
+            days_silent = (now_ts - data["last_seen_at"]) / (86400 * 1000)
             logger.info(
                 f"Detected topic abandonment: '{target}' "
                 f"(silent for {days_silent:.1f} days, "
@@ -133,8 +135,6 @@ class TopicAbandonmentDetector(BaseDetector):
                 "active_topics_analyzed": len(active_topics)
             }
         )
-        
-        return signals
         
         return signals
     
@@ -202,8 +202,8 @@ class TopicAbandonmentDetector(BaseDetector):
         Returns:
             DriftSignal object
         """
-        # Calculate silence duration
-        days_silent = (now_ts - data["last_seen_at"]) / 86400
+        # Calculate silence duration (timestamps are in milliseconds)
+        days_silent = (now_ts - data["last_seen_at"]) / (86400 * 1000)
         
         # Historical weight: higher reinforcement = stronger signal
         # Cap at 1.0 (normalize by assuming 5+ reinforcements is "strong")

@@ -123,12 +123,12 @@ async def _enqueue_for_tier(tier: str) -> int:
     settings = get_settings()
     now = datetime.now(timezone.utc)
     
-    # Calculate timestamp thresholds
+    # Calculate timestamp thresholds in milliseconds (to match behavior_snapshots table)
     active_since = int(
-        (now - timedelta(days=settings.active_user_days_threshold)).timestamp()
+        (now - timedelta(days=settings.active_user_days_threshold)).timestamp() * 1000
     )
     moderate_since = int(
-        (now - timedelta(days=settings.moderate_user_days_threshold)).timestamp()
+        (now - timedelta(days=settings.moderate_user_days_threshold)).timestamp() * 1000
     )
     
     # Get database connection and repository

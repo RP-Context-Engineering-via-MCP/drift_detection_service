@@ -15,6 +15,10 @@ class BehaviorRecord:
     """
     Local projection of a behavior stored in behavior_snapshots table.
     Populated from behavior.* events — never read from Behavior Service DB.
+    
+    IMPORTANT: When read from the database, timestamps are in MILLISECONDS.
+    When created from external events, they should be in SECONDS and will be
+    converted to milliseconds by the repository layer.
     """
     
     user_id: str
@@ -26,9 +30,9 @@ class BehaviorRecord:
     credibility: float  # 0.0 – 1.0
     reinforcement_count: int
     state: str  # ACTIVE | SUPERSEDED
-    created_at: int  # unix timestamp
-    last_seen_at: int  # unix timestamp
-    snapshot_updated_at: int  # when this row was last touched by an event
+    created_at: int  # unix timestamp (milliseconds when from DB)
+    last_seen_at: int  # unix timestamp (milliseconds when from DB)
+    snapshot_updated_at: int  # when this row was last touched by an event (milliseconds)
     
     def __post_init__(self):
         """Validate field values after initialization."""
@@ -109,12 +113,14 @@ class BehaviorRecord:
     @property
     def created_datetime(self) -> datetime:
         """Get created_at as datetime object."""
-        return datetime.fromtimestamp(self.created_at)
+        # created_at is stored in milliseconds, convert to seconds
+        return datetime.fromtimestamp(self.created_at / 1000)
     
     @property
     def last_seen_datetime(self) -> datetime:
         """Get last_seen_at as datetime object."""
-        return datetime.fromtimestamp(self.last_seen_at)
+        # last_seen_at is stored in milliseconds, convert to seconds
+        return datetime.fromtimestamp(self.last_seen_at / 1000)
     
     def __repr__(self) -> str:
         return (

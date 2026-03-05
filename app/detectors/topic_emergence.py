@@ -159,9 +159,10 @@ class TopicEmergenceDetector(BaseDetector):
         avg_credibility = sum(b.credibility for b in behaviors) / len(behaviors)
         
         # Calculate recency weight: more recent = stronger signal
-        now_ts = int(datetime.now().timestamp())
+        # Use milliseconds to match database timestamp format
+        now_ts = int(datetime.now().timestamp() * 1000)
         avg_days_ago = sum(
-            (now_ts - b.last_seen_at) / 86400 for b in behaviors
+            (now_ts - b.last_seen_at) / (86400 * 1000) for b in behaviors
         ) / len(behaviors)
         
         # Recency weight: decays linearly over recency_weight_days

@@ -12,7 +12,6 @@ from fastapi import APIRouter, Depends, Query, Path, Body
 from psycopg2.extensions import connection as Connection
 
 from api.models import (
-    DetectDriftRequest,
     DetectDriftResponse,
     GetDriftEventsResponse,
     DriftEventResponse,

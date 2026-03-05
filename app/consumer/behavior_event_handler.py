@@ -338,7 +338,7 @@ class BehaviorEventHandler:
         last_scan_time = scan_job_repo.get_last_completed_scan(user_id)
         
         if last_scan_time:
-            time_since_last_scan = now() - last_scan_time
+            time_since_last_scan = (now() - last_scan_time) // 1000  # Convert ms to seconds
             cooldown = self.settings.scan_cooldown_seconds
             
             if time_since_last_scan < cooldown:
