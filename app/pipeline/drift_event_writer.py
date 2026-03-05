@@ -62,10 +62,10 @@ class DriftEventWriter:
         current_snapshot: Optional[BehaviorSnapshot] = None
     ) -> List[str]:
         """
-        Write drift events to database and publish to Redis Streams.
+        Write drift events to database and publish aggregated message to Redis Streams.
         
-        This method ensures atomicity: events are only published to Redis
-        if the database write succeeds.
+        This method aggregates all events from a single scan into ONE Redis message
+        with the highest severity and deduplicated behavior_ref_ids.
         
         Args:
             events: List of DriftEvent objects to persist
@@ -85,6 +85,7 @@ class DriftEventWriter:
         logger.info(f"Writing {len(events)} drift event(s) to database")
         
         persisted_event_ids = []
+        persisted_events = []
         
         try:
             # Write events to database (within transaction if supported)
@@ -92,6 +93,7 @@ class DriftEventWriter:
                 try:
                     event_id = self.drift_event_repo.insert(event)
                     persisted_event_ids.append(event_id)
+                    persisted_events.append(event)
                     
                     logger.info(
                         f"Persisted drift event: {event_id} "
@@ -110,26 +112,24 @@ class DriftEventWriter:
                 logger.warning("No events were successfully persisted to database")
                 return []
             
-            # Publish persisted events to Redis Streams
-            for event in events:
-                if event.drift_event_id in persisted_event_ids:
-                    try:
-                        self._publish_to_stream(
-                            event,
-                            reference_snapshot=reference_snapshot,
-                            current_snapshot=current_snapshot
-                        )
-                    except Exception as e:
-                        logger.error(
-                            f"Failed to publish event {event.drift_event_id} to Redis: {e}",
-                            exc_info=True
-                        )
-                        # Don't fail the entire operation if Redis publish fails
-                        # The event is already persisted in the database
+            # Publish ONE aggregated message for all events from this scan
+            try:
+                self._publish_aggregated_message(
+                    events=persisted_events,
+                    reference_snapshot=reference_snapshot,
+                    current_snapshot=current_snapshot
+                )
+            except Exception as e:
+                logger.error(
+                    f"Failed to publish aggregated message to Redis: {e}",
+                    exc_info=True
+                )
+                # Don't fail the entire operation if Redis publish fails
+                # The events are already persisted in the database
             
             logger.info(
                 f"Successfully wrote {len(persisted_event_ids)} event(s) "
-                f"and published to Redis Streams"
+                f"and published aggregated message to Redis Streams"
             )
             
             return persisted_event_ids
@@ -215,15 +215,19 @@ class DriftEventWriter:
         Raises:
             redis.RedisError: If publishing fails
         """
-        # Build simplified event payload for drift.events stream
+        # Build event payload for drift.events stream
         event_data = {
             "drift_event_id": event.drift_event_id,
             "user_id": event.user_id,
-            "severity": event.severity.value
+            "severity": event.severity.value,
+            "behavior_ref_ids": event.behavior_ref_ids
         }
         
         logger.debug(
-            f"Publishing event to stream '{self.stream_name}': {event_data}"
+            f"Publishing event to stream '{self.stream_name}': "
+            f"drift_event_id={event.drift_event_id}, "
+            f"severity={event.severity.value}, "
+            f"behavior_count={len(event.behavior_ref_ids)}"
         )
         
         try:
@@ -254,6 +258,104 @@ class DriftEventWriter:
         except Exception as e:
             logger.error(
                 f"Unexpected error publishing event {event.drift_event_id}: {e}",
+                exc_info=True
+            )
+            raise
+
+    def _publish_aggregated_message(
+        self,
+        events: List[DriftEvent],
+        reference_snapshot: Optional[BehaviorSnapshot] = None,
+        current_snapshot: Optional[BehaviorSnapshot] = None
+    ) -> str:
+        """
+        Publish ONE aggregated drift message for all events from a single scan.
+        
+        Aggregates multiple drift events into a single Redis message with:
+        - All drift_event_ids from the scan
+        - Highest severity detected
+        - Deduplicated union of all behavior_ref_ids
+        
+        Args:
+            events: List of DriftEvent objects to aggregate
+            reference_snapshot: Optional reference snapshot for additional context
+            current_snapshot: Optional current snapshot for additional context
+            
+        Returns:
+            Redis Stream message ID
+            
+        Raises:
+            redis.RedisError: If publishing fails
+        """
+        if not events:
+            logger.warning("No events to publish in aggregated message")
+            return ""
+        
+        # Get user_id (should be same for all events in a scan)
+        user_id = events[0].user_id
+        
+        # Collect all drift_event_ids
+        drift_event_ids = [event.drift_event_id for event in events]
+        
+        # Find highest severity
+        severity_order = {
+            "NO_DRIFT": 0,
+            "WEAK_DRIFT": 1,
+            "MODERATE_DRIFT": 2,
+            "STRONG_DRIFT": 3
+        }
+        highest_severity = max(events, key=lambda e: severity_order.get(e.severity.value, 0)).severity.value
+        
+        # Deduplicate and merge all behavior_ref_ids
+        all_behavior_ids = set()
+        for event in events:
+            all_behavior_ids.update(event.behavior_ref_ids)
+        behavior_ref_ids = sorted(list(all_behavior_ids))
+        
+        # Build aggregated event payload
+        aggregated_data = {
+            "drift_event_ids": drift_event_ids,
+            "user_id": user_id,
+            "severity": highest_severity,
+            "behavior_ref_ids": behavior_ref_ids,
+            "event_count": len(events)
+        }
+        
+        logger.debug(
+            f"Publishing aggregated message to stream '{self.stream_name}': "
+            f"user_id={user_id}, "
+            f"event_count={len(events)}, "
+            f"highest_severity={highest_severity}, "
+            f"behavior_count={len(behavior_ref_ids)}"
+        )
+        
+        try:
+            # Publish to Redis Stream
+            message_id = self.redis_client.xadd(
+                name=self.stream_name,
+                fields={"payload": json.dumps(aggregated_data)},
+                maxlen=10000,
+                approximate=True
+            )
+            
+            logger.info(
+                f"Published aggregated drift message to stream '{self.stream_name}' "
+                f"with message ID: {message_id} "
+                f"(user: {user_id}, events: {len(events)}, severity: {highest_severity}, "
+                f"behaviors: {len(behavior_ref_ids)})"
+            )
+            
+            return message_id
+            
+        except redis.RedisError as e:
+            logger.error(
+                f"Redis error publishing aggregated message for user {user_id}: {e}",
+                exc_info=True
+            )
+            raise
+        except Exception as e:
+            logger.error(
+                f"Unexpected error publishing aggregated message for user {user_id}: {e}",
                 exc_info=True
             )
             raise

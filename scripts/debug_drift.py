@@ -55,7 +55,8 @@ def main():
     print(f"Total behaviors: {len(all_behaviors)}")
     
     for b in all_behaviors:
-        created_dt = datetime.fromtimestamp(b.created_at, tz=timezone.utc)
+        # created_at is in milliseconds from DB, convert to seconds
+        created_dt = datetime.fromtimestamp(b.created_at / 1000, tz=timezone.utc)
         print(f"  - {b.behavior_id}: {b.target} ({b.polarity})")
         print(f"    credibility={b.credibility}, reinforcement={b.reinforcement_count}, state={b.state}")
         print(f"    created_at={b.created_at} ({created_dt.date()})")
@@ -65,10 +66,11 @@ def main():
     print(f"BEHAVIORS IN REFERENCE WINDOW (active_only=False)")
     print("=" * 60)
     
+    # Convert datetime to milliseconds for DB query
     ref_behaviors = behavior_repo.get_behaviors_in_window(
         user_id, 
-        int(ref_start.timestamp()), 
-        int(ref_end.timestamp()),
+        int(ref_start.timestamp() * 1000), 
+        int(ref_end.timestamp() * 1000),
         active_only=False  # Include superseded behaviors for historical window
     )
     print(f"Found: {len(ref_behaviors)}")
@@ -80,10 +82,11 @@ def main():
     print(f"BEHAVIORS IN CURRENT WINDOW")
     print("=" * 60)
     
+    # Convert datetime to milliseconds for DB query
     current_behaviors = behavior_repo.get_behaviors_in_window(
         user_id,
-        int(current_start.timestamp()),
-        int(current_end.timestamp())
+        int(current_start.timestamp() * 1000),
+        int(current_end.timestamp() * 1000)
     )
     print(f"Found: {len(current_behaviors)}")
     for b in current_behaviors:
@@ -94,6 +97,7 @@ def main():
     print(f"CONFLICTS IN CURRENT WINDOW")
     print("=" * 60)
     
+    # Conflicts use seconds (not milliseconds)
     conflicts = conflict_repo.get_conflicts_in_window(
         user_id,
         int(current_start.timestamp()),

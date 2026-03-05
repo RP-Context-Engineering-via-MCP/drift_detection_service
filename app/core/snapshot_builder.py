@@ -44,7 +44,7 @@ class SnapshotBuilder:
 
         Returns:
             BehaviorSnapshot with behaviors and conflicts from the window
-            
+
         Raises:
             ValueError: If window_start >= window_end or invalid user_id
             RuntimeError: If database query fails
@@ -52,12 +52,12 @@ class SnapshotBuilder:
         # Validate inputs
         if not user_id or not user_id.strip():
             raise ValueError("user_id cannot be empty")
-        
+
         if window_start >= window_end:
             raise ValueError(
                 f"Invalid time window: start ({window_start}) must be before end ({window_end})"
             )
-        
+
         # Check for unreasonably large windows (> 1 year)
         window_days = (window_end - window_start).days
         if window_days > 365:
@@ -65,9 +65,10 @@ class SnapshotBuilder:
                 f"Large time window detected: {window_days} days. "
                 f"This may impact performance."
             )
-        
-        start_ts = int(window_start.timestamp())
-        end_ts = int(window_end.timestamp())
+
+        # FIX: Convert datetime seconds → milliseconds to match DB storage format
+        start_ts = int(window_start.timestamp()) * 1000
+        end_ts = int(window_end.timestamp()) * 1000
 
         logger.debug(
             f"Building snapshot for {user_id}: {window_start} to {window_end}",
@@ -198,8 +199,11 @@ class SnapshotBuilder:
             logger.warning(f"User {user_id} has no behavior data")
             return False
 
-        now_ts = int(datetime.now(timezone.utc).timestamp())
-        days_of_history = (now_ts - earliest) / 86400
+        # Use milliseconds to match database timestamp format  
+        now_ts = int(datetime.now(timezone.utc).timestamp() * 1000)
+
+        # Both timestamps are in milliseconds - convert to days
+        days_of_history = (now_ts - earliest) / (86400 * 1000)
 
         if days_of_history < self.settings.min_days_of_history:
             logger.warning(
@@ -213,3 +217,4 @@ class SnapshotBuilder:
             f"{count} behaviors, {days_of_history:.1f} days of history"
         )
         return True
+    

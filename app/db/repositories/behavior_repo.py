@@ -306,6 +306,9 @@ class BehaviorRepository:
         """
         Insert a behavior record into the database (for testing).
 
+        Note: This method expects BehaviorRecord timestamps in seconds and
+        converts them to milliseconds for database storage.
+
         Args:
             behavior: BehaviorRecord to insert
         """
@@ -319,6 +322,7 @@ class BehaviorRepository:
 
         cursor = self.connection.cursor()
         try:
+            # Convert timestamps from seconds to milliseconds for DB storage
             cursor.execute(
                 self._adapt_query(query),
                 (
@@ -331,9 +335,9 @@ class BehaviorRepository:
                     behavior.credibility,
                     behavior.reinforcement_count,
                     behavior.state,
-                    behavior.created_at,
-                    behavior.last_seen_at,
-                    behavior.snapshot_updated_at,
+                    behavior.created_at * 1000,
+                    behavior.last_seen_at * 1000,
+                    behavior.snapshot_updated_at * 1000,
                 ),
             )
             self.connection.commit()
@@ -473,11 +477,16 @@ class BehaviorRepository:
             credibility: Credibility score (0.0-1.0)
             reinforcement_count: Number of reinforcements
             state: Behavior state (ACTIVE, SUPERSEDED)
-            created_at: Creation timestamp
-            last_seen_at: Last seen timestamp
+            created_at: Creation timestamp (in seconds, will be converted to milliseconds)
+            last_seen_at: Last seen timestamp (in seconds, will be converted to milliseconds)
         """
         from datetime import datetime, timezone
-        snapshot_updated_at = int(datetime.now(timezone.utc).timestamp())
+        snapshot_updated_at = int(datetime.now(timezone.utc).timestamp() * 1000)
+
+        # Convert timestamps from seconds to milliseconds
+        # (Behavior Engine sends in seconds, but Drift Service uses milliseconds)
+        created_at_ms = int(created_at) * 1000
+        last_seen_at_ms = int(last_seen_at) * 1000
 
         query = """
             INSERT INTO behavior_snapshots (
@@ -505,7 +514,7 @@ class BehaviorRepository:
                 (
                     user_id, behavior_id, target, intent, context,
                     polarity, credibility, reinforcement_count, state,
-                    created_at, last_seen_at, snapshot_updated_at
+                    created_at_ms, last_seen_at_ms, snapshot_updated_at
                 )
             )
             logger.debug(f"Upserted behavior {behavior_id} for user {user_id}")
@@ -528,6 +537,7 @@ class BehaviorRepository:
             user_id: User identifier
             behavior_id: Behavior identifier
             **kwargs: Fields to update (e.g., reinforcement_count, last_seen_at, state)
+                     Note: last_seen_at should be in seconds, will be converted to milliseconds
         """
         from datetime import datetime, timezone
         
@@ -540,12 +550,15 @@ class BehaviorRepository:
         params = []
         
         for key, value in kwargs.items():
+            # Convert timestamp fields from seconds to milliseconds
+            if key == 'last_seen_at':
+                value = int(value) * 1000
             set_clauses.append(f"{key} = %s")
             params.append(value)
         
-        # Always update snapshot_updated_at
+        # Always update snapshot_updated_at (in milliseconds)
         set_clauses.append("snapshot_updated_at = %s")
-        params.append(int(datetime.now(timezone.utc).timestamp()))
+        params.append(int(datetime.now(timezone.utc).timestamp() * 1000))
         
         # Add WHERE clause params
         params.extend([user_id, behavior_id])

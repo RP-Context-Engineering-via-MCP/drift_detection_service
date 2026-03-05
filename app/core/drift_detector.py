@@ -187,7 +187,7 @@ class DriftDetector:
         )
 
         # Step 6: Persist events
-        self._persist_events(events)
+        self._persist_events(events, reference=reference, current=current)
 
         logger.info(
             f"Drift detection complete for {user_id}: {len(events)} event(s)"
@@ -253,6 +253,18 @@ class DriftDetector:
         events = []
         detected_at = now()
 
+        # Extract behavior IDs from both windows (all behaviors used in detection)
+        reference_behavior_ids = [b.behavior_id for b in reference.behaviors]
+        current_behavior_ids = [b.behavior_id for b in current.behaviors]
+        
+        # Combine and deduplicate behavior IDs from both windows
+        all_behavior_ids = list(set(reference_behavior_ids + current_behavior_ids))
+        
+        logger.debug(
+            f"Extracted {len(all_behavior_ids)} unique behavior IDs from snapshots "
+            f"({len(reference_behavior_ids)} reference, {len(current_behavior_ids)} current)"
+        )
+
         for signal in signals:
             event = DriftEvent.from_signal(
                 signal=signal,
@@ -262,37 +274,48 @@ class DriftDetector:
                 current_window_start=int(current.window_start.timestamp()),
                 current_window_end=int(current.window_end.timestamp()),
                 detected_at=detected_at,
-                behavior_ref_ids=[],  # Can be populated if needed
+                behavior_ref_ids=all_behavior_ids,
                 conflict_ref_ids=[],
             )
             events.append(event)
             logger.debug(
                 f"Created event: {event.drift_type.value} "
-                f"(score: {event.drift_score:.3f})"
+                f"(score: {event.drift_score:.3f}, {len(all_behavior_ids)} behaviors)"
             )
 
         return events
 
-    def _persist_events(self, events: List[DriftEvent]) -> None:
+    def _persist_events(
+        self, 
+        events: List[DriftEvent],
+        reference=None,
+        current=None
+    ) -> None:
         """
-        Persist drift events to database and publish to Redis Streams.
+        Persist drift events to database and publish aggregated message to Redis Streams.
 
         Args:
             events: DriftEvent objects to persist and publish
+            reference: Reference snapshot for context
+            current: Current snapshot for context
         """
-        for event in events:
-            try:
-                event_id = self.drift_event_writer.write_single(
-                    event=event,
-                    publish_to_stream=True
-                )
-                logger.info(
-                    f"Persisted drift event: {event_id} "
-                    f"({event.drift_type.value})"
-                )
-            except Exception as e:
-                logger.error(
-                    f"Failed to persist drift event "
-                    f"{event.drift_event_id}: {e}",
-                    exc_info=True,
-                )
+        if not events:
+            logger.debug("No events to persist")
+            return
+        
+        try:
+            # Use batch write method which publishes ONE aggregated message
+            event_ids = self.drift_event_writer.write(
+                events=events,
+                reference_snapshot=reference,
+                current_snapshot=current
+            )
+            logger.info(
+                f"Persisted {len(event_ids)} drift event(s) "
+                f"and published aggregated message"
+            )
+        except Exception as e:
+            logger.error(
+                f"Failed to persist drift events: {e}",
+                exc_info=True,
+            )

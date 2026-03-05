@@ -18,8 +18,8 @@ logger = logging.getLogger(__name__)
 
 
 def now() -> int:
-    """Get current UTC timestamp as integer."""
-    return int(datetime.now(timezone.utc).timestamp())
+    """Get current UTC timestamp as integer in milliseconds."""
+    return int(datetime.now(timezone.utc).timestamp() * 1000)
 
 
 class ScanJobRepository:
@@ -232,7 +232,7 @@ class ScanJobRepository:
             user_id: User ID to check
 
         Returns:
-            Timestamp of last completed scan, or None if no scans exist
+            Timestamp in milliseconds of last completed scan, or None if no scans exist
         """
         query = """
             SELECT completed_at
@@ -386,8 +386,8 @@ class ScanJobRepository:
         - dormant: No behaviors after moderate_since (not returned)
 
         Args:
-            active_since: Unix timestamp - users active after this are "active"
-            moderate_since: Unix timestamp - users active after this are "moderate" or "active"
+            active_since: Unix timestamp in milliseconds - users active after this are "active"
+            moderate_since: Unix timestamp in milliseconds - users active after this are "moderate" or "active"
 
         Returns:
             Dictionary with 'active' and 'moderate' keys containing user ID lists

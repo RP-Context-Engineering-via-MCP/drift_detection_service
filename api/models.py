@@ -36,23 +36,6 @@ class DriftSeverityAPI(str, Enum):
 # Request Models
 # ============================================================================
 
-class DetectDriftRequest(BaseModel):
-    """Request to detect drift for a user"""
-    user_id: str = Field(..., description="User ID to detect drift for")
-    force: bool = Field(
-        False,
-        description="Force detection even if in cooldown period"
-    )
-
-    class Config:
-        json_schema_extra = {
-            "example": {
-                "user_id": "user_123",
-                "force": False
-            }
-        }
-
-
 class GetDriftEventsRequest(BaseModel):
     """Query parameters for getting drift events"""
     drift_type: Optional[DriftTypeAPI] = Field(

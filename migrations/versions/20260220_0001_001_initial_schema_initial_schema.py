@@ -148,9 +148,9 @@ def upgrade() -> None:
             trigger_event    TEXT NOT NULL,
             status           TEXT NOT NULL DEFAULT 'PENDING',
             priority         TEXT NOT NULL DEFAULT 'NORMAL',
-            scheduled_at     BIGINT NOT NULL,
-            started_at       BIGINT,
-            completed_at     BIGINT,
+            scheduled_at     BIGINT NOT NULL,     -- Timestamp in milliseconds
+            started_at       BIGINT,              -- Timestamp in milliseconds
+            completed_at     BIGINT,              -- Timestamp in milliseconds
             error_message    TEXT,
             
             CONSTRAINT valid_status CHECK (status IN ('PENDING', 'RUNNING', 'DONE', 'FAILED', 'SKIPPED'))
