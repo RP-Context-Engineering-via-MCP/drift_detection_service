@@ -9,6 +9,7 @@ from typing import List, Optional
 from datetime import datetime
 
 from app.models.behavior import BehaviorRecord
+from app.utils.time import now_ms
 
 logger = logging.getLogger(__name__)
 
@@ -481,7 +482,7 @@ class BehaviorRepository:
             last_seen_at: Last seen timestamp (in seconds, will be converted to milliseconds)
         """
         from datetime import datetime, timezone
-        snapshot_updated_at = int(datetime.now(timezone.utc).timestamp() * 1000)
+        snapshot_updated_at = now_ms()
 
         # Convert timestamps from seconds to milliseconds
         # (Behavior Engine sends in seconds, but Drift Service uses milliseconds)
@@ -558,7 +559,7 @@ class BehaviorRepository:
         
         # Always update snapshot_updated_at (in milliseconds)
         set_clauses.append("snapshot_updated_at = %s")
-        params.append(int(datetime.now(timezone.utc).timestamp() * 1000))
+        params.append(now_ms())
         
         # Add WHERE clause params
         params.extend([user_id, behavior_id])

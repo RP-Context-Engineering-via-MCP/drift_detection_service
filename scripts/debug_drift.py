@@ -8,6 +8,7 @@ from app.db.connection import get_sync_connection_simple
 from app.db.repositories.behavior_repo import BehaviorRepository
 from app.db.repositories.conflict_repo import ConflictRepository
 from app.config import get_settings
+from app.utils.time import datetime_to_timestamp_ms
 
 def main():
     settings = get_settings()
@@ -69,8 +70,8 @@ def main():
     # Convert datetime to milliseconds for DB query
     ref_behaviors = behavior_repo.get_behaviors_in_window(
         user_id, 
-        int(ref_start.timestamp() * 1000), 
-        int(ref_end.timestamp() * 1000),
+        datetime_to_timestamp_ms(ref_start), 
+        datetime_to_timestamp_ms(ref_end),
         active_only=False  # Include superseded behaviors for historical window
     )
     print(f"Found: {len(ref_behaviors)}")
@@ -85,8 +86,8 @@ def main():
     # Convert datetime to milliseconds for DB query
     current_behaviors = behavior_repo.get_behaviors_in_window(
         user_id,
-        int(current_start.timestamp() * 1000),
-        int(current_end.timestamp() * 1000)
+        datetime_to_timestamp_ms(current_start),
+        datetime_to_timestamp_ms(current_end)
     )
     print(f"Found: {len(current_behaviors)}")
     for b in current_behaviors:

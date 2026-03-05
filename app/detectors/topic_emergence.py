@@ -9,11 +9,13 @@ interests or focus areas.
 import logging
 import time
 from datetime import datetime
-from typing import List
+from typing import List, Set
 
 from app.detectors.base import BaseDetector
+from app.detectors.utils import cluster_topics
 from app.models.drift import DriftSignal, DriftType
 from app.models.snapshot import BehaviorSnapshot
+from app.utils.time import now_ms
 
 
 logger = logging.getLogger(__name__)
@@ -105,8 +107,44 @@ class TopicEmergenceDetector(BaseDetector):
             logger.debug("No topics meet reinforcement threshold")
             return signals
         
-        # Step 3: Calculate drift scores for each emerging topic
-        for target in emerging_topics:
+        # Step 3: Apply semantic clustering to detect domain emergence
+        emerging_topics_set = set(emerging_topics)
+        clusters = cluster_topics(emerging_topics_set)
+        
+        # Track which topics are in clusters (for domain emergence)
+        clustered_topics = set()
+        for cluster in clusters:
+            clustered_topics.update(cluster)
+        
+        # Create signals for domain emergence (clusters)
+        if clusters:
+            logger.info(
+                f"Detected {len(clusters)} semantic cluster(s) indicating domain emergence",
+                extra={
+                    "user_id": current.user_id,
+                    "cluster_count": len(clusters),
+                    "clusters": [list(c) for c in clusters]
+                }
+            )
+            
+            for cluster in clusters:
+                signal = self._create_domain_emergence_signal(cluster, current)
+                signals.append(signal)
+                
+                logger.info(
+                    f"Detected domain emergence: {list(cluster)} "
+                    f"(score={signal.drift_score:.3f})",
+                    extra={
+                        "user_id": current.user_id,
+                        "emerging_domain": list(cluster),
+                        "drift_score": signal.drift_score,
+                        "cluster_size": len(cluster)
+                    }
+                )
+        
+        # Step 4: Calculate drift scores for individual emerging topics (not in clusters)
+        unclustered_topics = emerging_topics_set - clustered_topics
+        for target in unclustered_topics:
             signal = self._create_emergence_signal(target, current)
             signals.append(signal)
             
@@ -160,7 +198,7 @@ class TopicEmergenceDetector(BaseDetector):
         
         # Calculate recency weight: more recent = stronger signal
         # Use milliseconds to match database timestamp format
-        now_ts = int(datetime.now().timestamp() * 1000)
+        now_ts = now_ms()
         avg_days_ago = sum(
             (now_ts - b.last_seen_at) / (86400 * 1000) for b in behaviors
         ) / len(behaviors)
@@ -199,6 +237,89 @@ class TopicEmergenceDetector(BaseDetector):
             drift_type=DriftType.TOPIC_EMERGENCE,
             drift_score=drift_score,
             affected_targets=[target],
+            evidence=evidence,
+            confidence=confidence
+        )
+    
+    def _create_domain_emergence_signal(
+        self,
+        cluster: Set[str],
+        current: BehaviorSnapshot
+    ) -> DriftSignal:
+        """
+        Create a drift signal for an emerging domain (cluster of related topics).
+        
+        Args:
+            cluster: Set of semantically related emerging topics
+            current: Current behavior snapshot
+            
+        Returns:
+            DriftSignal object with is_domain_emergence flag
+        """
+        cluster_list = list(cluster)
+        
+        # Aggregate metrics across all topics in the cluster
+        total_reinforcement = 0
+        total_behaviors = 0
+        credibility_sum = 0
+        all_contexts = set()
+        days_ago_sum = 0
+        
+        now_ts = now_ms()
+        
+        for target in cluster:
+            behaviors = current.get_behaviors_by_target(target)
+            total_behaviors += len(behaviors)
+            total_reinforcement += sum(b.reinforcement_count for b in behaviors)
+            credibility_sum += sum(b.credibility for b in behaviors)
+            all_contexts.update(current.get_contexts_for_target(target))
+            
+            # Calculate average days ago for this target
+            if behaviors:
+                target_days_ago = sum(
+                    (now_ts - b.last_seen_at) / (86400 * 1000) for b in behaviors
+                ) / len(behaviors)
+                days_ago_sum += target_days_ago
+        
+        # Calculate cluster-level metrics
+        avg_credibility = credibility_sum / total_behaviors if total_behaviors > 0 else 0.5
+        avg_days_ago = days_ago_sum / len(cluster)
+        
+        # Recency weight
+        recency_weight = max(0.1, 1.0 - (avg_days_ago / self.recency_weight_days))
+        
+        # Reinforcement weight (domain emergence should have stronger signal)
+        reinforcement_weight = min(total_reinforcement / (len(cluster) * 3.0), 1.0)
+        
+        # Cluster size bonus: larger clusters = stronger domain signal
+        cluster_bonus = min(1.0 + (len(cluster) - 2) * 0.1, 1.3)
+        
+        # Domain emergence gets boosted score (stronger signal than individual topics)
+        drift_score = reinforcement_weight * avg_credibility * recency_weight * cluster_bonus
+        
+        # Higher confidence for domain emergence (semantic coherence)
+        confidence = min(0.7 + (len(cluster) * 0.1), 0.95)
+        
+        # Create evidence dictionary
+        evidence = {
+            "is_domain_emergence": True,
+            "emerging_topics": sorted(cluster_list),
+            "cluster_size": len(cluster),
+            "total_reinforcement_count": total_reinforcement,
+            "total_behavior_count": total_behaviors,
+            "avg_credibility": round(avg_credibility, 3),
+            "avg_days_since_mention": round(avg_days_ago, 1),
+            "recency_weight": round(recency_weight, 3),
+            "reinforcement_weight": round(reinforcement_weight, 3),
+            "cluster_bonus": round(cluster_bonus, 3),
+            "contexts": sorted(list(all_contexts)),
+        }
+        
+        # Create and return signal
+        return self._create_signal(
+            drift_type=DriftType.TOPIC_EMERGENCE,
+            drift_score=drift_score,
+            affected_targets=cluster_list,
             evidence=evidence,
             confidence=confidence
         )

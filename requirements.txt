@@ -36,5 +36,8 @@ httpx==0.26.0  # For API testing
 # Logging
 python-json-logger==2.0.7
 
+# Monitoring
+prometheus-client==0.20.0
+
 # Type Checking
 typing-extensions==4.9.0

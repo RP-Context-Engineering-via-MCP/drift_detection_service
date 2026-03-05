@@ -14,6 +14,7 @@ from typing import Dict, List, Tuple
 from app.detectors.base import BaseDetector
 from app.models.drift import DriftSignal, DriftType
 from app.models.snapshot import BehaviorSnapshot
+from app.utils.time import now_ms
 
 
 logger = logging.getLogger(__name__)
@@ -87,7 +88,7 @@ class TopicAbandonmentDetector(BaseDetector):
         
         # Step 2: Check which topics are abandoned in current window
         # Use milliseconds to match database timestamp format
-        now_ts = int(datetime.now().timestamp() * 1000)
+        now_ts = now_ms()
         silence_threshold_ts = now_ts - (self.silence_threshold * 86400 * 1000)
         
         for target, data in active_topics.items():

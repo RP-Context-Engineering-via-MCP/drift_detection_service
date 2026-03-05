@@ -13,13 +13,9 @@ import logging
 import uuid
 from typing import List, Optional, Dict, Any
 from datetime import datetime, timezone
+from app.utils.time import now_ms
 
 logger = logging.getLogger(__name__)
-
-
-def now() -> int:
-    """Get current UTC timestamp as integer in milliseconds."""
-    return int(datetime.now(timezone.utc).timestamp() * 1000)
 
 
 class ScanJobRepository:
@@ -60,7 +56,7 @@ class ScanJobRepository:
             job_id (str) of the enqueued job
         """
         job_id = str(uuid.uuid4())
-        scheduled_at = now()
+        scheduled_at = now_ms()
 
         query = """
             INSERT INTO drift_scan_jobs (
@@ -158,7 +154,7 @@ class ScanJobRepository:
             status: New status (PENDING, RUNNING, DONE, FAILED, SKIPPED)
             error_message: Optional error message for FAILED status
         """
-        timestamp = now()
+        timestamp = now_ms()
         
         # Determine which timestamp field to update
         if status == "RUNNING":

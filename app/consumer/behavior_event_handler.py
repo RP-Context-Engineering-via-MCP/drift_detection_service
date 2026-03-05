@@ -12,7 +12,8 @@ Enqueues drift scan jobs when appropriate based on configurable gates.
 
 import logging
 import json
-from typing import Dict, Any, Optional, Set
+import redis
+from typing import Dict, Any, Optional
 from datetime import datetime, timezone
 
 from app.config import get_settings
@@ -26,14 +27,68 @@ logger = logging.getLogger(__name__)
 class BehaviorEventHandler:
     """Handles behavior events and manages drift scan job enqueuing."""
 
-    # Track processed event IDs to ensure idempotency (in-memory)
-    # In production, consider Redis-based tracking for multi-instance deployments
-    _processed_events: Set[str] = set()
-    _max_processed_cache = 10000  # Limit cache size to prevent memory growth
-
     def __init__(self):
         """Initialize the behavior event handler."""
         self.settings = get_settings()
+        
+        # Initialize Redis client for distributed idempotency tracking
+        try:
+            self.redis_client = redis.from_url(
+                self.settings.redis_url,
+                decode_responses=True,
+                socket_connect_timeout=5
+            )
+            logger.info("Redis client initialized for idempotency tracking")
+        except Exception as e:
+            logger.error(f"Failed to initialize Redis client: {e}")
+            self.redis_client = None
+        
+        # Key for processed events set
+        self.processed_events_key = f"processed_events:{self.settings.redis_consumer_group}"
+
+    def _is_event_processed(self, event_id: str) -> bool:
+        """
+        Check if an event has been processed using distributed Redis SET.
+        
+        Args:
+            event_id: Event ID to check
+            
+        Returns:
+            True if event was already processed, False otherwise
+        """
+        if not self.redis_client:
+            # Fallback: no idempotency check if Redis unavailable
+            logger.warning("Redis unavailable - idempotency check skipped")
+            return False
+        
+        try:
+            return self.redis_client.sismember(self.processed_events_key, event_id)
+        except Exception as e:
+            logger.error(f"Failed to check event {event_id} in Redis: {e}")
+            # Fail open: allow processing
+            return False
+
+    def _mark_processed(self, event_id: str) -> None:
+        """
+        Mark an event as processed using distributed Redis SET.
+        
+        Args:
+            event_id: Event ID to mark as processed
+        """
+        if not self.redis_client:
+            logger.warning("Redis unavailable - cannot mark event as processed")
+            return
+        
+        try:
+            # Add to set
+            self.redis_client.sadd(self.processed_events_key, event_id)
+            
+            # Set TTL on the set (7 days) to prevent indefinite growth
+            self.redis_client.expire(self.processed_events_key, 86400 * 7)
+            
+            logger.debug(f"Marked event {event_id} as processed in Redis")
+        except Exception as e:
+            logger.error(f"Failed to mark event {event_id} as processed: {e}")
 
     def handle_event(self, event_id: str, event_data: Dict[str, Any]) -> None:
         """
@@ -46,8 +101,8 @@ class BehaviorEventHandler:
         Raises:
             ValueError: If event type is missing or invalid
         """
-        # Idempotency check
-        if event_id in self._processed_events:
+        # Idempotency check using distributed Redis SET
+        if self._is_event_processed(event_id):
             logger.debug(f"Skipping duplicate event {event_id}")
             return
 
@@ -371,24 +426,3 @@ class BehaviorEventHandler:
             f"Enqueued drift scan job {job_id} for user {user_id} "
             f"(trigger: {trigger_event}, priority: {priority})"
         )
-
-    def _mark_processed(self, event_id: str) -> None:
-        """
-        Mark an event as processed for idempotency.
-
-        Args:
-            event_id: Event ID to mark as processed
-        """
-        # Limit cache size to prevent unbounded memory growth
-        if len(self._processed_events) >= self._max_processed_cache:
-            # Clear old entries (simple approach: clear half the cache)
-            # In production, use an LRU cache or Redis-based tracking
-            logger.warning(
-                f"Processed events cache exceeded {self._max_processed_cache}, "
-                "clearing oldest entries"
-            )
-            self._processed_events = set(
-                list(self._processed_events)[self._max_processed_cache // 2:]
-            )
-
-        self._processed_events.add(event_id)

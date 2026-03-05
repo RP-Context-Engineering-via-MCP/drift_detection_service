@@ -210,6 +210,66 @@ class HealthResponse(BaseModel):
         }
 
 
+class DriftInsight(BaseModel):
+    """Human-readable insight about a drift event"""
+    drift_event_id: str
+    title: str
+    description: str
+    impact_level: str  # "high", "medium", "low"
+    affected_items: List[str]
+    time_period: str
+    recommendations: List[str]
+
+
+class DriftSummary(BaseModel):
+    """Summary statistics for drift events"""
+    total_drifts: int
+    by_severity: Dict[str, int]
+    by_type: Dict[str, int]
+    most_common_type: Optional[str] = None
+    highest_severity: Optional[str] = None
+    date_range: Dict[str, str]
+
+
+class DriftTimelineItem(BaseModel):
+    """Timeline entry for drift visualization"""
+    drift_event_id: str
+    drift_type: str
+    severity: str
+    timestamp: int
+    date_label: str
+    short_description: str
+
+
+class UserDriftDashboardResponse(BaseModel):
+    """Comprehensive drift dashboard for frontend display"""
+    user_id: str
+    summary: DriftSummary
+    timeline: List[DriftTimelineItem]
+    insights: List[DriftInsight]
+    raw_events: List[DriftEventResponse]
+    generated_at: int
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "user_id": "user_123",
+                "summary": {
+                    "total_drifts": 5,
+                    "by_severity": {"STRONG_DRIFT": 2, "MODERATE_DRIFT": 3},
+                    "by_type": {"TOPIC_EMERGENCE": 2, "INTENSITY_SHIFT": 3},
+                    "most_common_type": "INTENSITY_SHIFT",
+                    "highest_severity": "STRONG_DRIFT",
+                    "date_range": {"from": "2024-01-01", "to": "2024-03-06"}
+                },
+                "timeline": [],
+                "insights": [],
+                "raw_events": [],
+                "generated_at": 1709942400
+            }
+        }
+
+
 class ErrorResponse(BaseModel):
     """Error response model"""
     error: str

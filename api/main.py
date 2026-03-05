@@ -5,12 +5,14 @@ REST API for Drift Detection Service
 """
 
 import logging
+import time
 from contextlib import asynccontextmanager
 from urllib.parse import urlparse
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.exceptions import RequestValidationError
+from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
 
 from api.routes import router
 from api.dependencies import close_db_pool
@@ -22,6 +24,11 @@ from api.errors import (
 )
 from app.config import get_settings
 from app.scheduler import build_scheduler
+from app.utils.metrics import (
+    record_api_request,
+    api_active_requests,
+    active_requests_tracker
+)
 
 # Setup logging
 logging.basicConfig(
@@ -119,6 +126,30 @@ app = FastAPI(
 # Middleware
 # ============================================================================
 
+# Metrics middleware - track all API requests
+@app.middleware("http")
+async def metrics_middleware(request: Request, call_next):
+    """Middleware to track API request metrics."""
+    start_time = time.time()
+    
+    with active_requests_tracker(api_active_requests):
+        response = await call_next(request)
+    
+    # Calculate duration
+    duration = time.time() - start_time
+    
+    # Extract method, path, and status code
+    method = request.method
+    path = request.url.path
+    status_code = response.status_code
+    
+    # Record metrics (skip /metrics endpoint to avoid recursion)
+    if path != "/metrics":
+        record_api_request(method, path, status_code, duration)
+    
+    return response
+
+
 # CORS middleware
 app.add_middleware(
     CORSMiddleware,
@@ -142,6 +173,20 @@ app.add_exception_handler(Exception, generic_error_handler)
 # Routes
 # ============================================================================
 
+# Prometheus metrics endpoint
+@app.get("/metrics", tags=["Monitoring"])
+async def metrics():
+    """
+    Prometheus metrics endpoint.
+    
+    Returns metrics in Prometheus text format for scraping.
+    """
+    return Response(
+        content=generate_latest(),
+        media_type=CONTENT_TYPE_LATEST
+    )
+
+
 # Include API routes
 app.include_router(router, prefix="/api/v1", tags=["Drift Detection"])
 
@@ -155,7 +200,8 @@ async def root():
         "version": "1.0.0",
         "status": "running",
         "docs": "/docs",
-        "health": "/api/v1/health"
+        "health": "/api/v1/health",
+        "metrics": "/metrics"
     }
 
 

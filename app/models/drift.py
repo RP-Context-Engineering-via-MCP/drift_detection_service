@@ -12,6 +12,12 @@ from enum import Enum
 import uuid
 
 
+def _now_ms() -> int:
+    """Get current timestamp in milliseconds for defaults."""
+    from datetime import datetime, timezone
+    return int(datetime.now(timezone.utc).timestamp() * 1000)
+
+
 class DriftType(str, Enum):
     """Types of behavioral drift that can be detected."""
     
@@ -273,10 +279,10 @@ class DriftEvent:
         Mark this drift event as acknowledged.
         
         Args:
-            timestamp: Unix timestamp for acknowledgment (defaults to now)
+            timestamp: Unix timestamp in milliseconds for acknowledgment (defaults to now)
         """
         if timestamp is None:
-            timestamp = int(datetime.now().timestamp())
+            timestamp = _now_ms()
         self.acknowledged_at = timestamp
     
     def __repr__(self) -> str:

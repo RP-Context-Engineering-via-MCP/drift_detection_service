@@ -9,6 +9,7 @@ from app.db.connection import get_sync_connection_simple
 from app.db.repositories.behavior_repo import BehaviorRepository
 from app.db.repositories.conflict_repo import ConflictRepository
 from app.models.snapshot import BehaviorSnapshot
+from app.utils.time import datetime_to_timestamp_ms, now_ms
 
 logger = logging.getLogger(__name__)
 
@@ -66,9 +67,9 @@ class SnapshotBuilder:
                 f"This may impact performance."
             )
 
-        # FIX: Convert datetime seconds → milliseconds to match DB storage format
-        start_ts = int(window_start.timestamp()) * 1000
-        end_ts = int(window_end.timestamp()) * 1000
+        # Convert datetime to milliseconds to match DB storage format
+        start_ts = datetime_to_timestamp_ms(window_start)
+        end_ts = datetime_to_timestamp_ms(window_end)
 
         logger.debug(
             f"Building snapshot for {user_id}: {window_start} to {window_end}",
@@ -199,8 +200,8 @@ class SnapshotBuilder:
             logger.warning(f"User {user_id} has no behavior data")
             return False
 
-        # Use milliseconds to match database timestamp format  
-        now_ts = int(datetime.now(timezone.utc).timestamp() * 1000)
+        # Use milliseconds to match database timestamp format
+        now_ts = now_ms()
 
         # Both timestamps are in milliseconds - convert to days
         days_of_history = (now_ts - earliest) / (86400 * 1000)

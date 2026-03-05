@@ -16,7 +16,7 @@ from app.detectors.preference_reversal import PreferenceReversalDetector
 from app.detectors.topic_abandonment import TopicAbandonmentDetector
 from app.detectors.topic_emergence import TopicEmergenceDetector
 from app.models.drift import DriftEvent
-from app.utils.time import now
+from app.utils.time import now, now_ms, datetime_to_timestamp_ms
 
 logger = logging.getLogger(__name__)
 
@@ -251,7 +251,7 @@ class DriftDetector:
             List of DriftEvent objects
         """
         events = []
-        detected_at = now()
+        detected_at = now_ms()
 
         # Extract behavior IDs from both windows (all behaviors used in detection)
         reference_behavior_ids = [b.behavior_id for b in reference.behaviors]
@@ -269,10 +269,10 @@ class DriftDetector:
             event = DriftEvent.from_signal(
                 signal=signal,
                 user_id=user_id,
-                reference_window_start=int(reference.window_start.timestamp()),
-                reference_window_end=int(reference.window_end.timestamp()),
-                current_window_start=int(current.window_start.timestamp()),
-                current_window_end=int(current.window_end.timestamp()),
+                reference_window_start=datetime_to_timestamp_ms(reference.window_start),
+                reference_window_end=datetime_to_timestamp_ms(reference.window_end),
+                current_window_start=datetime_to_timestamp_ms(current.window_start),
+                current_window_end=datetime_to_timestamp_ms(current.window_end),
                 detected_at=detected_at,
                 behavior_ref_ids=all_behavior_ids,
                 conflict_ref_ids=[],

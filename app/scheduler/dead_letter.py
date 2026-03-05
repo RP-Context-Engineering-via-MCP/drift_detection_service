@@ -17,6 +17,7 @@ import redis
 import redis.asyncio as aioredis
 
 from app.config import get_settings
+from app.utils.time import now_ms
 
 logger = logging.getLogger(__name__)
 
@@ -65,7 +66,7 @@ async def reap_dead_letters() -> int:
             logger.debug("No pending entries in PEL")
             return 0
         
-        now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+        current_time_ms = now_ms()
         dead_count = 0
         
         for entry in pending_entries:
@@ -111,7 +112,7 @@ async def reap_dead_letters() -> int:
                 # Add metadata about the failure
                 dead_letter_data = {
                     **msg_data,
-                    "failed_at": str(now_ms),
+                    "failed_at": str(current_time_ms),
                     "delivery_attempts": str(delivery_count),
                     "idle_time_ms": str(idle_ms),
                     "original_stream": settings.redis_stream_behavior_events,
