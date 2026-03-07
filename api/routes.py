@@ -33,7 +33,6 @@ from api.errors import (
 )
 from app.core.drift_detector import DriftDetector
 from app.db.repositories.drift_event_repo import DriftEventRepository
-from app.db.repositories.behavior_repo import BehaviorRepository
 from app.db.connection import check_database_health, now
 from app.utils.time import now_ms
 from app.config import Settings
@@ -87,8 +86,7 @@ async def health_check(
 async def detect_drift(
     user_id: str = Path(..., description="User ID to detect drift for"),
     force: bool = Query(False, description="Force detection even if in cooldown"),
-    detector: DriftDetector = Depends(get_drift_detector),
-    db: Connection = Depends(get_db_connection)
+    detector: DriftDetector = Depends(get_drift_detector)
 ) -> DetectDriftResponse:
     """
     Detect behavioral drift for a user
@@ -101,14 +99,7 @@ async def detect_drift(
     """
     logger.info(f"Drift detection requested for user: {user_id}, force={force}")
     
-    # Check if user has data
-    behavior_repo = BehaviorRepository(db)
-    behavior_count = behavior_repo.count_active_behaviors(user_id)
-    
-    if behavior_count == 0:
-        raise UserNotFoundError(user_id)
-    
-    # Run detection
+    # Run detection (includes pre-flight checks for data and cooldown)
     try:
         # Note: force parameter would need to be implemented in DriftDetector
         # For now, it always respects cooldown

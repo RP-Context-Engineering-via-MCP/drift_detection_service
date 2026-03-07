@@ -74,9 +74,9 @@ class DriftDetector:
             settings: Optional settings (loads from env if None)
         """
         self.settings = settings or get_settings()
-        self.snapshot_builder = snapshot_builder or SnapshotBuilder()
-        self.aggregator = aggregator or DriftAggregator()
         self.connection = connection or get_sync_connection_simple()
+        self.snapshot_builder = snapshot_builder or SnapshotBuilder(self.connection)
+        self.aggregator = aggregator or DriftAggregator()
         self.drift_event_repo = DriftEventRepository(self.connection)
         self.drift_event_writer = DriftEventWriter(self.connection)
 

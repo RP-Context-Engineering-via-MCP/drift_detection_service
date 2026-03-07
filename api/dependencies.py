@@ -10,6 +10,8 @@ import psycopg2
 from psycopg2 import pool
 from urllib.parse import urlparse
 
+from fastapi import Depends
+
 from app.config import get_settings, Settings
 from app.core.drift_detector import DriftDetector
 from app.db.connection import get_sync_connection
@@ -76,10 +78,13 @@ def get_db_connection() -> Generator:
 # Drift Detector
 # ============================================================================
 
-@lru_cache
-def get_drift_detector() -> DriftDetector:
-    """Get cached drift detector instance"""
-    return DriftDetector()
+def get_drift_detector(db = Depends(get_db_connection)) -> DriftDetector:
+    """
+    Get drift detector instance with fresh database connection
+    
+    Note: Not cached to ensure fresh connection for each request
+    """
+    return DriftDetector(connection=db)
 
 
 # ============================================================================

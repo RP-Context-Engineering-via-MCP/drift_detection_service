@@ -17,9 +17,13 @@ logger = logging.getLogger(__name__)
 class SnapshotBuilder:
     """Constructs BehaviorSnapshot objects from database queries."""
 
-    def __init__(self):
-        """Initialize with repository connections."""
-        self.connection = get_sync_connection_simple()
+    def __init__(self, connection=None):
+        """Initialize with repository connections.
+        
+        Args:
+            connection: Optional database connection. If not provided, creates a new one.
+        """
+        self.connection = connection or get_sync_connection_simple()
         self.behavior_repo = BehaviorRepository(self.connection)
         self.conflict_repo = ConflictRepository(self.connection)
         self.settings = get_settings()
